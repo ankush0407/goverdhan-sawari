@@ -6,9 +6,9 @@ Free matchmaking, no payments handled (cash/UPI between rider and driver, record
 
 ## Flow
 
-**Driver** — texts `DRIVER` → language → name → vehicle no. → seats → photo → RC photo → you approve → `duty` + location = on duty.
+**Driver** — texts `DRIVER` → language → name → vehicle no. (Indian plate format checked, or "No number plate") → seats → photo → RC photo (or "Don't have it now", send later) → admin taps Approve → `duty` + location = on duty. Typing "hi"/"ride" mid-signup offers to switch to booking a ride; "cancel" stops signup.
 
-**Rider** — scans QR (opens chat, "hi") → language → pickup pin (or typed place) → drop (list) → group size → when.
+**Rider** — scans QR (opens chat, "hi") → language → *first contact only:* "Book a ride / I am a driver" → pickup pin (or typed place) → drop (list) → group size → when.
 
 - **Parikrama** → fixed fare (`PARIKRAMA_FARE_PER_SEAT × people`). Nearby drivers get Accept/Skip. First accept wins.
 - **Anything else** → drivers pick a price + ETA (or type an amount). After `QUOTE_WINDOW_SEC` (or 5 quotes) the rider sees up to 5 quotes (cheapest first, with rating, ETA, photo) plus a reference fare once ≥3 similar rides are completed. Rider picks one.
@@ -18,21 +18,29 @@ Free matchmaking, no payments handled (cash/UPI between rider and driver, record
 
 **Feedback** — `FEEDBACK_DELAY_SEC` after completion: rider 1–5 stars → tag (polite / on time / fair price / overcharged / unsafe) → optional voice/text note. Driver gives 👍/👎 on the rider. Cancels and no-shows are logged with who and why.
 
+## Channels
+
+The flow (`src/flow.ts`) talks to a `Sender`; the server picks the channel from env:
+
+| Env set | Channel |
+|---|---|
+| `WA_PHONE_NUMBER_ID` + `WA_TOKEN` | WhatsApp Cloud API (production) |
+| `TELEGRAM_BOT_TOKEN` (and no `WA_*`) | Telegram bot — real phones while Meta approval is pending |
+| neither | Dev simulator: chat UI at `/sim` |
+
 ## Run locally (no WhatsApp needed)
 
 ```bash
 npm install
-npm run sim        # scripted end-to-end test: onboarding, quotes, trip, feedback, cancel, no-drivers
-ADMIN_TOKEN=secret npm start   # dev simulator on :3000
+npm run sim        # end-to-end test of the whole flow
+npm run sim:tg     # Telegram adapter against a fake Bot API
+cp .env.example .env   # then fill it in
+set -a && source .env && set +a && npm start
 ```
 
-Dev simulator (only when `WA_*` is unset):
+**Dev simulator** (no channel configured): open `http://localhost:3000/sim` — several phones side by side, tappable buttons, 📍/📷, plus an admin panel to approve drivers and see stats. Raw endpoints: `POST /sim/send`, `GET /sim/outbox?to=…`, `GET /sim/chat?phone=…`.
 
-```bash
-curl -XPOST localhost:3000/sim/send -H 'content-type: application/json' -d '{"from":"919800000001","text":"hi"}'
-curl "localhost:3000/sim/outbox?to=919800000001"
-# buttons/list picks:  {"from":"…","replyId":"lang:en"}   location: {"from":"…","lat":27.5,"lng":77.46}
-```
+**Telegram** (`TELEGRAM_BOT_TOKEN` from @BotFather): long polling, so no public URL or tunnel. Each user shares their phone number once with Telegram's button; that number is their identity, so "numbers revealed only after a match" works as on WhatsApp. Links: `https://t.me/<bot>?start=DRIVER` for drivers, `?start=hi` for riders. The bot runs as long as this process does — host it (below) for anything beyond a desk test.
 
 ## Connect real WhatsApp (Meta Cloud API)
 
@@ -56,7 +64,7 @@ POST /admin/drivers/:phone/approve      (also reject)
 GET  /admin/stats        match rate, completion rate, time to first quote, repeat riders, ratings
 GET  /admin/rides.csv    one row per ride with every timestamp, fare, rating, tag, cancel reason
 ```
-Set `ADMIN_PHONE` to get a WhatsApp ping when a driver finishes registering.
+Set `ADMIN_PHONE` (digits with country code, e.g. `919812345678`) to get a chat alert with **Approve / Reject** buttons when a driver finishes registering. Only that number can use them.
 
 ## Before you rely on it — known gaps
 
@@ -69,6 +77,8 @@ Set `ADMIN_PHONE` to get a WhatsApp ping when a driver finishes registering.
 - **Disintermediation** is expected once numbers are revealed; the ride log + OTP + ratings are your signal that matches became real rides.
 - Riders can't also be drivers from the same number. RC/ID are collected as photos only; you verify manually.
 - Interactive limits respected: ≤3 buttons, ≤10 list rows, title lengths clamped.
+- **Admin view is API-only** in Telegram/WhatsApp mode: driver photos/RC can't be viewed, and `rides.csv` timestamps are epoch milliseconds. An admin dashboard is the next thing to build.
+- Some copy still says "Tap 📎 → Location" (WhatsApp wording); on Telegram the 📍 button does it.
 
 ## Layout
 
@@ -76,7 +86,10 @@ Set `ADMIN_PHONE` to get a WhatsApp ping when a driver finishes registering.
 src/messages.ts   all copy, Hindi + English
 src/flow.ts       state machine, dispatch, quotes, trip, feedback, scheduler tick
 src/whatsapp.ts   Cloud API sender, webhook parser, signature check, in-memory test sender
-src/server.ts     webhook, admin API, dev simulator
+src/telegram.ts   Telegram stand-in: same Sender interface, long polling, phone-number linking
+src/server.ts     channel selection, webhook, admin API, dev simulator
 src/db.ts         SQLite schema
-src/sim.ts        end-to-end test
+src/sim.ts        end-to-end test of the flow
+src/telegram-sim.ts  Telegram adapter test against a fake Bot API
+public/sim.html   dev simulator chat UI + admin panel
 ```

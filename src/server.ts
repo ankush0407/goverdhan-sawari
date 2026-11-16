@@ -1,7 +1,9 @@
 import express from 'express';
+import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { Engine, defaultConfig, type Config } from './flow.js';
 import { CloudSender, MemorySender, parseWebhook, verifySignature, type Incoming, type Sender } from './whatsapp.js';
+import { TelegramBot } from './telegram.js';
 
 const env = process.env;
 const num = (v: string | undefined, d: number) => (v && !Number.isNaN(Number(v)) ? Number(v) : d);
@@ -19,15 +21,27 @@ const cfg: Config = {
 };
 
 const cloud = Boolean(env.WA_PHONE_NUMBER_ID && env.WA_TOKEN);
-const memory = new MemorySender(true);
-const sender: Sender = cloud ? new CloudSender(env.WA_PHONE_NUMBER_ID!, env.WA_TOKEN!) : memory;
 const db = openDb(env.DB_PATH ?? './data.sqlite');
+// Telegram is a stand-in for WhatsApp while Meta approval is pending; WhatsApp wins if both are configured.
+const telegram = !cloud && env.TELEGRAM_BOT_TOKEN ? new TelegramBot(env.TELEGRAM_BOT_TOKEN, db) : undefined;
+const memory = new MemorySender(true);
+const sender: Sender = cloud ? new CloudSender(env.WA_PHONE_NUMBER_ID!, env.WA_TOKEN!) : telegram ?? memory;
+const channel = cloud ? 'Cloud API' : telegram ? 'TELEGRAM' : 'DEV SIMULATOR (no WA_* env set)';
 const engine = new Engine(db, sender, cfg);
+if (telegram) {
+  telegram.run((m) => {
+    console.log(`[in] +${m.from} ${m.kind}${m.replyId ? ` ${m.replyId}` : ''}`); // who and what kind, never the content
+    return engine.handle(m);
+  }).catch((e) => {
+    console.error('[tg] could not start — check TELEGRAM_BOT_TOKEN', e);
+    process.exit(1);
+  });
+}
 
 const app = express();
 app.use(express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 
-app.get('/health', (_req, res) => res.json({ ok: true, whatsapp: cloud ? 'cloud' : 'dev-simulator' }));
+app.get('/health', (_req, res) => res.json({ ok: true, whatsapp: cloud ? 'cloud' : telegram ? 'telegram' : 'dev-simulator' }));
 
 // ---------- WhatsApp webhook ----------
 app.get('/webhook', (req, res) => {
@@ -105,8 +119,10 @@ admin.get('/rides.csv', (_req, res) => {
 });
 app.use('/admin', admin);
 
-// ---------- Dev simulator (only when WhatsApp creds are not configured) ----------
-if (!cloud) {
+// ---------- Dev simulator (only when neither WhatsApp nor Telegram is configured) ----------
+if (!cloud && !telegram) {
+  // Inbound messages, each tagged with the outbox length at send time so /sim/chat can interleave both sides.
+  const simInbox: { at: number; m: Incoming }[] = [];
   app.post('/sim/send', async (req, res) => {
     const b = req.body ?? {};
     const m: Incoming = {
@@ -114,14 +130,28 @@ if (!cloud) {
       kind: b.replyId ? 'reply' : b.lat != null ? 'location' : b.mediaId ? 'image' : 'text',
       text: b.text, replyId: b.replyId, lat: b.lat, lng: b.lng, mediaId: b.mediaId,
     };
+    simInbox.push({ at: memory.outbox.length, m });
     try { await engine.handle(m); res.json({ ok: true }); } catch (e: any) { res.status(500).json({ error: String(e?.message ?? e) }); }
   });
   app.get('/sim/outbox', (req, res) => res.json(req.query.to ? memory.to(String(req.query.to)) : memory.outbox));
+  app.get('/sim/chat', (req, res) => {
+    const phone = String(req.query.phone ?? '');
+    const items: object[] = [];
+    let i = 0;
+    const flushInbox = (upTo: number) => {
+      for (; i < simInbox.length && simInbox[i].at <= upTo; i++) if (simInbox[i].m.from === phone) items.push({ dir: 'in', ...simInbox[i].m });
+    };
+    memory.outbox.forEach((o, k) => { flushInbox(k); if (o.to === phone) items.push({ dir: 'out', ...o }); });
+    flushInbox(Infinity);
+    res.json(items);
+  });
+  app.get('/sim', (_req, res) => res.sendFile(fileURLToPath(new URL('../public/sim.html', import.meta.url))));
 }
 
 const port = num(env.PORT, 3000);
 app.listen(port, () => {
-  console.log(`[goverdhan-sawari] listening on :${port} — WhatsApp: ${cloud ? 'Cloud API' : 'DEV SIMULATOR (no WA_* env set)'}`);
+  console.log(`[goverdhan-sawari] listening on :${port} — channel: ${channel}`);
+  if (!cloud && !telegram) console.log(`[goverdhan-sawari] chat simulator UI: http://localhost:${port}/sim`);
   if (!env.ADMIN_TOKEN) console.warn('[warn] ADMIN_TOKEN not set — admin API disabled');
   if (cloud && !env.WA_APP_SECRET) console.warn('[warn] WA_APP_SECRET not set — webhook signatures are NOT verified');
 });

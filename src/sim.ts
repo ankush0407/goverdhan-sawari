@@ -1,7 +1,7 @@
 // End-to-end simulation: no WhatsApp credentials needed. Run with `npm run sim`.
 import assert from 'node:assert/strict';
 import { openDb } from './db.js';
-import { Engine, defaultConfig } from './flow.js';
+import { Engine, defaultConfig, normalizePlate } from './flow.js';
 import { MemorySender, type Incoming, type Out } from './whatsapp.js';
 
 let clock = 1_700_000_000_000;
@@ -22,6 +22,7 @@ const img = (from: string, mediaId: string) => go(from, { kind: 'image', mediaId
 const advance = async (sec: number) => { clock += sec * 1000; await engine.tick(); };
 const last = (phone: string): Out => wa.last(phone)!;
 const texts = (phone: string) => wa.to(phone).filter((o) => o.t === 'text').map((o: any) => o.body as string);
+const bodies = (phone: string) => wa.to(phone).map((o: any) => (o.body ?? o.caption ?? '') as string);
 const q = <T>(sql: string, ...args: unknown[]) => db.prepare(sql).get(...args) as T;
 const lastRideId = () => q<{ id: number }>('SELECT MAX(id) id FROM rides').id;
 const step = (s: string) => console.log(`✓ ${s}`);
@@ -35,7 +36,7 @@ async function onboardDriver(phone: string, name: string, plate: string, lat: nu
   await img(phone, `media-photo-${name.length}x`);
   await img(phone, `media-rc-${name.length}x`);
   assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', phone).status, 'pending');
-  assert.ok(texts(ADMIN).some((b) => b.includes(name)), 'admin notified of new driver');
+  assert.ok(bodies(ADMIN).some((b) => b.includes(name)), 'admin notified of new driver');
   await engine.approveDriver(phone);
   await pick(phone, 'duty:on');
   assert.equal(last(phone).t, 'reqloc');
@@ -45,7 +46,10 @@ async function onboardDriver(phone: string, name: string, plate: string, lat: nu
 
 async function riderRequest(phone: string, lang: 'hi' | 'en', dropKey: string, group: number, lat: number, lng: number) {
   await say(phone, 'hi');
-  if (q<{ lang: string | null }>('SELECT lang FROM users WHERE phone=?', phone).lang == null) await pick(phone, `lang:${lang}`);
+  if (q<{ lang: string | null }>('SELECT lang FROM users WHERE phone=?', phone).lang == null) {
+    await pick(phone, `lang:${lang}`);
+    await pick(phone, 'role:rider');
+  }
   await loc(phone, lat, lng);
   await pick(phone, `drop:${dropKey}`);
   await pick(phone, `grp:${group}`);
@@ -57,6 +61,85 @@ async function riderRequest(phone: string, lang: 'hi' | 'en', dropKey: string, g
 await onboardDriver(D1, 'Ramesh Kumar', 'up85 ab 1234', 27.498, 77.462);
 await onboardDriver(D2, 'Suresh Yadav', 'up85 cd 5678', 27.499, 77.463);
 step('two drivers onboarded via chat, approved, on duty');
+
+const D3 = '919666666666';
+await say(D3, 'hi');
+await pick(D3, 'lang:en');
+const role = last(D3) as Extract<Out, { t: 'buttons' }>;
+assert.equal(role.t, 'buttons');
+assert.deepEqual(role.buttons.map((b) => b.id), ['role:rider', 'role:driver'], 'new user asked rider or driver');
+await pick(D3, 'role:driver');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D3).state, 'drv_name');
+assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', D3).status, 'draft');
+step('driver who opens with "hi" picks "I am a driver" and lands in onboarding');
+
+await say(D3, 'Mohan Lal');
+await say(D3, 'nahi hai');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D3).state, 'drv_vehicle', 'bad plate re-asked');
+assert.ok((last(D3) as any).buttons?.some((b: { id: string }) => b.id === 'noplate'), 'bad plate offers "no number plate"');
+await say(D3, 'up-85-ef 9012');
+assert.equal(q<{ vehicle_no: string }>('SELECT vehicle_no FROM drivers WHERE phone=?', D3).vehicle_no, 'UP85 EF 9012');
+await pick(D3, 'seats:5');
+await img(D3, 'media-photo-mohan');
+await say(D3, "don't have");
+assert.ok((last(D3) as any).buttons?.some((b: { id: string }) => b.id === 'rclater'), 'typing instead of a photo re-offers the skip button');
+await pick(D3, 'rclater');
+const d3 = q<any>('SELECT status, rc_media_id FROM drivers WHERE phone=?', D3);
+assert.equal(d3.status, 'pending');
+assert.equal(d3.rc_media_id, null);
+assert.ok(bodies(ADMIN).some((b) => b.includes('Mohan Lal') && b.includes('RC not sent')), 'admin told RC is missing');
+await img(D3, 'media-rc-mohan-later');
+assert.equal(q<{ rc_media_id: string }>('SELECT rc_media_id FROM drivers WHERE phone=?', D3).rc_media_id, 'media-rc-mohan-later');
+assert.ok(bodies(ADMIN).some((b) => b.includes('RC received from Mohan Lal')), 'admin told RC arrived');
+step('driver without RC finishes sign-up, sends RC later, admin informed both times');
+
+assert.ok(wa.to(ADMIN).some((o: any) => o.t === 'buttons' && o.buttons.some((b: { id: string }) => b.id === `adm:ok:${D3}`)), 'admin alert has Approve button');
+await pick(R1, `adm:ok:${D3}`); // not the admin
+assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', D3).status, 'pending', 'non-admin cannot approve');
+await pick(ADMIN, `adm:ok:${D3}`);
+assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', D3).status, 'approved');
+assert.ok(texts(ADMIN).some((b) => b.includes('Approved: Mohan Lal')), 'admin told approval went through');
+assert.equal(last(D3).t, 'buttons', 'driver gets approval + duty menu');
+step('admin approves a driver with the button in their own chat; others cannot');
+
+const D6 = '919101010101'; // opened the driver link but actually wants a ride
+await say(D6, 'DRIVER');
+await pick(D6, 'lang:hi');
+assert.ok((last(D6) as any).buttons?.some((b: { id: string }) => b.id === 'role:rider'), 'driver welcome offers "Book a ride"');
+await say(D6, 'Hi');
+assert.equal(q<{ name: string | null }>('SELECT name FROM drivers WHERE phone=?', D6).name, null, '"Hi" not saved as a name');
+assert.deepEqual((last(D6) as any).buttons.map((b: { id: string }) => b.id), ['role:rider', 'role:driver'], 'asked: ride instead, or continue?');
+await pick(D6, 'role:driver');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D6).state, 'drv_name', 'continue resumes the same step');
+await say(D6, 'hello');
+await pick(D6, 'role:rider');
+assert.equal(q<{ c: number }>('SELECT COUNT(*) c FROM drivers WHERE phone=?', D6).c, 0, 'draft driver dropped');
+assert.equal(last(D6).t, 'reqloc', 'switched straight into booking');
+const D7 = '919202020202';
+await say(D7, 'driver');
+await pick(D7, 'lang:en');
+await say(D7, 'Gopal');
+await say(D7, 'cancel');
+assert.equal(q<{ c: number }>('SELECT COUNT(*) c FROM drivers WHERE phone=?', D7).c, 0, 'cancel drops the draft');
+assert.ok(texts(D7).at(-1)!.includes('registration stopped'));
+await say(D7, 'hi');
+assert.equal(last(D7).t, 'reqloc', 'after cancel, "hi" books a ride');
+step('driver link but wants a ride: "hi" is not saved as a name, "Book a ride" switches over; cancel stops sign-up');
+
+for (const [raw, want] of [
+  ['UP85AB1234', 'UP85 AB 1234'], ['up 85 ab 1234', 'UP85 AB 1234'], ['DL3CAB1234', 'DL3 CAB 1234'],
+  ['UP85 1234', 'UP85 1234'], ['22 BH 1234 AA', '22 BH 1234 AA'],
+  ['nahi hai', null], ['1234', null], ['UP85', null], ['abc', null], ['UP85 AB 12345', null],
+] as const) assert.equal(normalizePlate(raw), want, `plate ${raw}`);
+const D4 = '919888888888';
+await say(D4, 'driver');
+await pick(D4, 'lang:hi');
+await say(D4, 'Shyam');
+await say(D4, 'number nahi hai');
+await pick(D4, 'noplate');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D4).state, 'drv_seats');
+assert.equal(q<{ vehicle_no: string | null }>('SELECT vehicle_no FROM drivers WHERE phone=?', D4).vehicle_no, null);
+step('plate format checked and tidied; bad plate re-asked; "no number plate" lets sign-up continue');
 
 // ---------------------------------------------------------------- B. quote ride, full lifecycle
 const ride1 = await riderRequest(R1, 'en', 'mathura', 3, 27.497, 77.461);

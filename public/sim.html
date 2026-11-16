@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sawari Simulator</title>
+<style>
+  :root {
+    --bar: #075e54; --page: #f0f2f5; --chat: #efeae2; --me: #d9fdd3; --them: #ffffff;
+    --ink: #111b21; --muted: #667781; --link: #027eb5; --accent: #00a884; --line: #e2e5e7;
+    --panel: #ffffff; --warn: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bar: #1f2c34; --page: #0b141a; --chat: #0b141a; --me: #005c4b; --them: #202c33;
+      --ink: #e9edef; --muted: #8696a0; --link: #53bdeb; --accent: #00a884; --line: #2a3942;
+      --panel: #111b21; --warn: #f2b8b5;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 -apple-system, system-ui, "Segoe UI", sans-serif; background: var(--page); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--bar); color: #fff; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0 auto 0 0; }
+  header form { display: flex; gap: 6px; flex-wrap: wrap; }
+  header input { border: 0; border-radius: 6px; padding: 6px 8px; font: inherit; width: 130px; }
+  header button { border: 0; border-radius: 6px; padding: 6px 10px; background: var(--accent); color: #fff; font: inherit; cursor: pointer; }
+  main { display: flex; gap: 12px; padding: 12px 16px; align-items: flex-start; overflow-x: auto; }
+
+  aside { flex: 0 0 260px; background: var(--panel); border-radius: 14px; padding: 12px; height: calc(100vh - 82px); min-height: 480px; overflow-y: auto; }
+  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 14px 0 6px; }
+  aside h2:first-child { margin-top: 0; }
+  aside label { display: block; font-size: 12px; color: var(--muted); }
+  aside input { width: 100%; border: 1px solid var(--line); background: transparent; color: var(--ink); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  .drv { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 6px; }
+  .drv .act { display: flex; gap: 6px; margin-top: 6px; }
+  .drv button { flex: 1; border: 0; border-radius: 6px; padding: 5px; font: inherit; cursor: pointer; background: var(--accent); color: #fff; }
+  .drv button.no { background: transparent; color: var(--warn); border: 1px solid var(--line); }
+  dl { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; margin: 0; }
+  dt { color: var(--muted); } dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+  .err { color: var(--warn); font-size: 12px; }
+  .muted { color: var(--muted); font-size: 12px; }
+
+  .phone { flex: 0 0 320px; height: calc(100vh - 82px); min-height: 480px; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden; background: var(--chat); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .phone .top { background: var(--bar); color: #fff; padding: 8px 12px; display: flex; align-items: center; gap: 8px; }
+  .top .who { line-height: 1.2; } .top .name { font-weight: 600; } .top .num { font-size: 12px; opacity: .8; }
+  .top button { margin-left: auto; background: none; border: 0; color: #fff; opacity: .7; font-size: 18px; cursor: pointer; }
+  .log { flex: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .b { max-width: 88%; padding: 6px 9px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; box-shadow: 0 1px .5px rgba(0,0,0,.13); }
+  .b.bot { align-self: flex-start; background: var(--them); }
+  .b.me { align-self: flex-end; background: var(--me); }
+  .b .hdr { font-weight: 600; margin-bottom: 2px; }
+  .b .tag { font-size: 11px; color: var(--muted); }
+  .acts { display: flex; flex-direction: column; margin: 6px -9px -6px; border-top: 1px solid var(--line); }
+  .acts button { background: none; border: 0; border-top: 1px solid var(--line); color: var(--link); padding: 7px 9px; font: inherit; cursor: pointer; text-align: center; }
+  .acts button:first-child { border-top: 0; }
+  .acts button.row { text-align: left; color: var(--ink); }
+  .acts button.row::before { content: "○ "; color: var(--muted); }
+  .acts button .d { display: block; color: var(--muted); font-size: 12px; padding-left: 14px; }
+  .acts button:hover { background: rgba(0,0,0,.05); }
+  .b a { color: var(--link); }
+  .empty { margin: auto; color: var(--muted); text-align: center; font-size: 13px; }
+  form.compose { display: flex; gap: 6px; padding: 8px; background: var(--page); }
+  form.compose input { flex: 1; min-width: 0; border: 0; border-radius: 18px; padding: 8px 12px; font: inherit; background: var(--panel); color: var(--ink); }
+  form.compose button { border: 0; border-radius: 18px; padding: 0 10px; cursor: pointer; font: inherit; background: var(--panel); color: var(--ink); }
+  form.compose button[type=submit] { background: var(--accent); color: #fff; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🛺 Sawari Simulator</h1>
+  <form id="add">
+    <input name="name" placeholder="Name (e.g. Rider C)" required>
+    <input name="phone" placeholder="Phone 91…" pattern="\d{8,15}" required>
+    <button>Add phone</button>
+  </form>
+</header>
+<main>
+  <aside>
+    <h2>Admin</h2>
+    <label>ADMIN_TOKEN <input id="token"></label>
+    <div id="adminErr" class="err"></div>
+    <h2>Pending drivers</h2>
+    <div id="pending" class="muted">None</div>
+    <h2>Stats</h2>
+    <dl id="stats"></dl>
+    <h2>Tips</h2>
+    <p class="muted">Driver: type <b>driver</b>, follow the prompts, use 📷 for photos, then approve them here.<br>
+      Rider: type <b>hi</b>.<br>
+      Quotes reach the rider after <code>QUOTE_WINDOW_SEC</code>.<br>
+      📍 sends that phone's location near Govardhan.</p>
+  </aside>
+  <div id="phones" style="display:contents"></div>
+</main>
+
+<script>
+const DEFAULT_PHONES = [
+  { name: 'Driver Ramesh', phone: '919111111111', lat: 27.498, lng: 77.462 },
+  { name: 'Driver Suresh', phone: '919222222222', lat: 27.499, lng: 77.463 },
+  { name: 'Rider A', phone: '919333333333', lat: 27.497, lng: 77.461 },
+  { name: 'Rider B', phone: '919444444444', lat: 27.496, lng: 77.460 },
+];
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+let phones = store.get('sawari.phones', DEFAULT_PHONES);
+const seen = new Map(); // phone -> number of chat items rendered
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = (s) => esc(s).replace(/\*([^*\n]+)\*/g, '<b>$1</b>').replace(/(^|\s)_([^_\n]+)_/g, '$1<i>$2</i>');
+const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
+
+async function send(p, body) {
+  await fetch('/sim/send', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ from: p.phone, ...body }) });
+  refreshChats();
+}
+const sendLoc = (p) => send(p, { lat: p.lat ?? 27.497, lng: p.lng ?? 77.461 });
+
+function renderPhones() {
+  const root = document.getElementById('phones');
+  root.innerHTML = '';
+  seen.clear();
+  for (const p of phones) {
+    const box = el('section', 'phone');
+    box.dataset.phone = p.phone;
+    const top = el('div', 'top', `<div class="who"><div class="name">${esc(p.name)}</div><div class="num">+${esc(p.phone)}</div></div>`);
+    const x = el('button', '', '×'); x.title = 'Remove phone';
+    x.onclick = () => { phones = phones.filter((q) => q.phone !== p.phone); store.set('sawari.phones', phones); renderPhones(); };
+    top.append(x);
+    const log = el('div', 'log', '<div class="empty">No messages yet</div>');
+    const form = el('form', 'compose', `<input placeholder="Type a message" autocomplete="off"><button type="button" title="Send location">📍</button><button type="button" title="Send a photo">📷</button><button type="submit">➤</button>`);
+    const [input, locBtn, imgBtn] = form.querySelectorAll('input, button');
+    form.onsubmit = (e) => { e.preventDefault(); const t = input.value.trim(); if (t) { input.value = ''; send(p, { text: t }); } };
+    locBtn.onclick = () => sendLoc(p);
+    imgBtn.onclick = () => send(p, { mediaId: `sim-photo-${Date.now()}` });
+    box.append(top, log, form);
+    root.append(box);
+  }
+  refreshChats();
+}
+
+function bubble(p, m) {
+  if (m.dir === 'in') {
+    const body = m.kind === 'reply' ? `↩︎ ${esc(m.text || m.replyId)}`
+      : m.kind === 'location' ? `📍 Location <span class="tag">${m.lat}, ${m.lng}</span>`
+      : m.kind === 'image' ? '📷 Photo'
+      : fmt(m.text);
+    return el('div', 'b me', body);
+  }
+  const b = el('div', 'b bot');
+  const acts = el('div', 'acts');
+  const action = (label, cls, fn) => { const btn = el('button', cls, label); btn.onclick = fn; acts.append(btn); };
+  switch (m.t) {
+    case 'text': b.innerHTML = fmt(m.body); break;
+    case 'buttons':
+      b.innerHTML = fmt(m.body);
+      for (const x of m.buttons) action(esc(x.title), '', () => send(p, { replyId: x.id, text: x.title }));
+      break;
+    case 'list':
+      b.innerHTML = (m.header ? `<div class="hdr">${esc(m.header)}</div>` : '') + fmt(m.body);
+      for (const r of m.rows) action(esc(r.title) + (r.description ? `<span class="d">${esc(r.description)}</span>` : ''), 'row', () => send(p, { replyId: r.id, text: r.title }));
+      break;
+    case 'image': b.innerHTML = `🖼 <span class="tag">image ${esc(m.mediaId)}</span>\n${fmt(m.caption)}`; break;
+    case 'location':
+      b.innerHTML = `📍 <b>${esc(m.name)}</b>\n<a href="https://maps.google.com/?q=${m.lat},${m.lng}" target="_blank" rel="noopener">${m.lat}, ${m.lng}</a>`;
+      break;
+    case 'reqloc':
+      b.innerHTML = fmt(m.body);
+      action('📍 Send location', '', () => sendLoc(p));
+      break;
+    default: b.textContent = JSON.stringify(m);
+  }
+  if (acts.childElementCount) b.append(acts);
+  return b;
+}
+
+async function refreshChats() {
+  for (const p of phones) {
+    const box = document.querySelector(`.phone[data-phone="${p.phone}"]`);
+    if (!box) continue;
+    let items;
+    try { items = await (await fetch(`/sim/chat?phone=${encodeURIComponent(p.phone)}`)).json(); } catch { continue; }
+    if (items.length === seen.get(p.phone)) continue;
+    const log = box.querySelector('.log');
+    const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    log.innerHTML = '';
+    if (!items.length) log.innerHTML = '<div class="empty">No messages yet</div>';
+    for (const m of items) log.append(bubble(p, m));
+    if (atBottom || !seen.has(p.phone)) log.scrollTop = log.scrollHeight;
+    seen.set(p.phone, items.length);
+  }
+}
+
+// ---------- admin panel ----------
+const tokenInput = document.getElementById('token');
+tokenInput.value = store.get('sawari.token', 'secret');
+tokenInput.oninput = () => { store.set('sawari.token', tokenInput.value); refreshAdmin(); };
+const admin = (path, opts = {}) => fetch(`/admin${path}`, { ...opts, headers: { authorization: `Bearer ${tokenInput.value}` } });
+
+async function refreshAdmin() {
+  const err = document.getElementById('adminErr');
+  try {
+    const [pr, sr] = await Promise.all([admin('/drivers?status=pending'), admin('/stats')]);
+    if (pr.status === 401) { err.textContent = 'Unauthorized: token must match ADMIN_TOKEN the server was started with.'; return; }
+    err.textContent = '';
+    const pending = await pr.json();
+    const box = document.getElementById('pending');
+    box.innerHTML = pending.length ? '' : 'None';
+    for (const d of pending) {
+      const rc = d.rc_media_id ? '<span class="muted">RC ✓</span>' : '<span class="err">⚠️ RC not sent yet</span>';
+      const c = el('div', 'drv', `<b>${esc(d.name ?? '—')}</b><br><span class="muted">+${esc(d.phone)} · ${d.vehicle_no ? esc(d.vehicle_no) : '<span class="err">⚠️ no number plate</span>'} ·${esc(d.seats ?? '?')} seats</span><br>${rc}`);
+      const act = el('div', 'act');
+      const ok = el('button', '', 'Approve'); ok.onclick = async () => { await admin(`/drivers/${d.phone}/approve`, { method: 'POST' }); refreshAdmin(); refreshChats(); };
+      const no = el('button', 'no', 'Reject'); no.onclick = async () => { await admin(`/drivers/${d.phone}/reject`, { method: 'POST' }); refreshAdmin(); refreshChats(); };
+      act.append(ok, no); c.append(act); box.append(c);
+    }
+    const s = await sr.json();
+    const pct = (v) => (v == null ? '—' : `${Math.round(v * 100)}%`);
+    const rows = [
+      ['Rides', s.rides.total],
+      ...s.rides.byStatus.map((x) => [`· ${x.status}`, x.c]),
+      ['Match rate', pct(s.rides.matchRate)],
+      ['Completion rate', pct(s.rides.completionRate)],
+      ['Fares (₹)', s.fareTotalRupees],
+      ['Drivers approved', s.drivers.approved],
+      ['Drivers on duty', s.drivers.onDutyNow],
+      ['Unique riders', s.riders.unique],
+      ['Avg rider rating', s.ratings.riderToDriverAvg == null ? '—' : s.ratings.riderToDriverAvg.toFixed(1)],
+    ];
+    document.getElementById('stats').innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('');
+  } catch {
+    err.textContent = 'Server not reachable.';
+  }
+}
+
+document.getElementById('add').onsubmit = (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const phone = String(f.get('phone')).trim();
+  if (phones.some((p) => p.phone === phone)) return;
+  phones.push({ name: String(f.get('name')).trim(), phone, lat: 27.497 + Math.random() * 0.004, lng: 77.46 + Math.random() * 0.004 });
+  store.set('sawari.phones', phones);
+  e.target.reset();
+  renderPhones();
+};
+
+renderPhones();
+refreshAdmin();
+setInterval(refreshChats, 1500);
+setInterval(refreshAdmin, 3000);
+</script>
+</body>
+</html>
