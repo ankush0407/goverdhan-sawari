@@ -6,7 +6,11 @@ import type { DB } from './db.js';
 import type { Engine } from './flow.js';
 import type { Sender } from './whatsapp.js';
 
-type Deps = { db: DB; engine: Engine; sender: Sender; token: string | undefined };
+type Deps = {
+  db: DB; engine: Engine; sender: Sender; token: string | undefined;
+  /** Wrong tokens allowed per address within the window before it is locked out (the correct token is refused too). */
+  maxFailures?: number; windowMs?: number;
+};
 
 /** Epoch ms → "2026-11-17 14:03:20" in India time, for the CSV and anything a person reads. */
 export const ist = (ms: number | null | undefined) =>
@@ -18,11 +22,24 @@ const safeEq = (a: string, b: string) => {
 };
 const parseJson = (s: string | null) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
 
-export function createAdminRouter({ db, engine, sender, token }: Deps) {
+export function createAdminRouter({ db, engine, sender, token, maxFailures = 10, windowMs = 15 * 60_000 }: Deps) {
   const admin = express.Router();
 
+  // On a public host anyone can try tokens, so repeated wrong ones lock that address out for a while.
+  const failures = new Map<string, number[]>(); // address → times of recent wrong tokens
   admin.use((req, res, next) => {
-    if (!token || !safeEq(req.header('authorization') ?? '', `Bearer ${token}`)) return res.sendStatus(401);
+    const ip = req.ip ?? 'unknown', now = Date.now();
+    if (failures.size > 1000) for (const [k, v] of failures) if (v.every((t) => now - t >= windowMs)) failures.delete(k);
+    const recent = (failures.get(ip) ?? []).filter((t) => now - t < windowMs);
+    if (recent.length >= maxFailures) {
+      failures.set(ip, recent);
+      return res.set('Retry-After', String(Math.ceil(windowMs / 1000))).sendStatus(429);
+    }
+    if (!token || !safeEq(req.header('authorization') ?? '', `Bearer ${token}`)) {
+      failures.set(ip, [...recent, now]);
+      return res.sendStatus(401);
+    }
+    failures.delete(ip);
     next();
   });
 

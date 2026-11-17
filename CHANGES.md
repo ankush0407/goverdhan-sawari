@@ -10,6 +10,68 @@ function name given next to each range.
 
 ---
 
+## 2026-11-17 — Prepare for Railway: host mode, admin lockout, deploy config
+
+Commit `<HASH>` (on top of `12fc312`). Line numbers below are for that commit.
+Tests: `npm run typecheck`, `npm run sim`, `npm run sim:tg` and `npm run sim:admin` (with the new lockout check) all pass.
+Also checked by hand: a clean copy of the project installed with `npm ci --omit=dev` (what a host does) and started with
+`RAILWAY_ENVIRONMENT=production`: it starts, `/health` answers, `/dashboard` is served, `/sim`, `/sim/send` and `/sim/outbox`
+return 404, `/admin/stats` returns 401, and SIGTERM logs "shutting down", exits cleanly and leaves no `-wal` file.
+
+**Not tested:** an actual Railway deploy (it needs the user's Railway account). The `railway.json` keys follow Railway's
+documented config-as-code format but were not run against Railway; check the first deploy log.
+
+### Why
+
+Deploying makes the admin API (driver photos and RCs) and the dashboard reachable from the internet for the first time,
+and a host restarts the app on every deploy. The app also would not have started on a host: `npm start` runs `tsx`, which
+was a development-only dependency and is skipped by a production install.
+
+### `src/server.ts` (131 lines; was 112)
+
+| Lines | Change |
+|---|---|
+| 12 | `production` is true when `NODE_ENV=production` or `RAILWAY_ENVIRONMENT` is set. Local runs are unchanged. |
+| 32–33 | `simulator` is only on when no channel is configured **and** not in production; `channel` reads `NONE` in production with no channel. |
+| 46 | In production `trust proxy` is 1, so `req.ip` is the real client behind the platform's proxy (needed by the lockout). |
+| 49 | `/health` reports `none` when no channel is configured in production. |
+| 80 | The dev simulator routes (`/sim*`) are registered only when `simulator` is true — never on a host. |
+| 109–121 | Startup: dashboard URL line, and three production warnings: no channel (116), `DB_PATH` unset so data is lost on redeploy (117), `ADMIN_TOKEN` shorter than 16 characters (118). |
+| 124–131 | `shutdown()` on SIGTERM/SIGINT: stop accepting requests and close the database so the write-ahead log is flushed. |
+
+### `src/admin.ts`
+
+| Lines | Change |
+|---|---|
+| 9–13 | `Deps` gains optional `maxFailures` and `windowMs`. |
+| 25 | Defaults: 10 wrong tokens per address per 15 minutes. |
+| 29–44 | The auth middleware now keeps `failures` per address. Once an address reaches the limit every request gets `429` with `Retry-After` — even with the correct token. A correct token clears that address's count, so a few typos never lock the admin out. Old entries are pruned when the map exceeds 1000. |
+
+### `src/admin-sim.ts` lines 74–85
+
+New check: with `maxFailures: 3`, wrong/wrong/right/wrong/wrong/right all behave (401 or 200), then three wrong tokens in a
+row make even the right one return 429 with a `Retry-After` header.
+
+### Deploy configuration (new and changed files)
+
+| File | Change |
+|---|---|
+| `package.json` lines 7–9 | `engines.node` is `>=20`. |
+| `package.json` lines 18–22 | `tsx` moved from `devDependencies` to `dependencies`; `package-lock.json` regenerated to match. |
+| `.node-version` (1 line) | `22`, so the host uses a Node version that has a prebuilt `better-sqlite3` (this Mac runs Node 25, which has none and compiles for minutes). |
+| `railway.json` (new, 11 lines) | Start command `npm start`, health check `/health` (60 s), `numReplicas: 1` (two instances would fight over Telegram and the database), restart on failure up to 10 times. |
+| `.env.example` lines 1–6 | Comments: `DB_PATH` must be on a volume, `ADMIN_TOKEN` needs 24+ random characters on a host, `ADMIN_PHONE` format. |
+| `README.md` lines 56–78 | New "Deploy (Railway)" section: separate production bot, variables table, volume at `/data`, domain, how to verify, what host mode does. |
+
+### Known gaps
+
+- Not deployed yet; first-deploy behaviour on Railway is unverified.
+- The SQLite file has no automatic backup (depends on Railway's plan); a download-backup endpoint would help.
+- A redeploy pauses the bot briefly while the volume moves to the new instance.
+- Only one replica can run (Telegram polling and SQLite), so there is no redundancy.
+
+---
+
 ## 2026-11-17 — "hi" after rating starts a new ride instead of becoming the feedback note
 
 Commit `a47a5b5` (on top of `9d0494e`). Line numbers below are for that commit.

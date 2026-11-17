@@ -71,6 +71,19 @@ assert.equal((await fetch(`http://127.0.0.1:${(s2.address() as AddressInfo).port
 s2.close();
 step('every admin endpoint needs the exact token; with no ADMIN_TOKEN set it stays closed');
 
+// Brute-force lockout: 3 wrong tokens in a row lock the address out, even for the right token; a right token resets the count.
+const lock = express();
+lock.use('/admin', createAdminRouter({ db, engine, sender: wa, token: 'tok', maxFailures: 3 }));
+const s3 = lock.listen(0);
+const hit = (token: string) => fetch(`http://127.0.0.1:${(s3.address() as AddressInfo).port}/admin/stats`, { headers: { authorization: `Bearer ${token}` } });
+for (const t of ['x', 'y', 'tok', 'x', 'y', 'tok']) assert.equal((await hit(t)).status, t === 'tok' ? 200 : 401, `typos with a right token between them never lock out (${t})`);
+for (const t of ['x', 'y', 'z']) assert.equal((await hit(t)).status, 401);
+const locked = await hit('tok');
+assert.equal(locked.status, 429, 'after 3 wrong tokens even the right one is refused');
+assert.ok(Number(locked.headers.get('retry-after')) > 0, 'told how long to wait');
+s3.close();
+step('admin brute-force lockout: 3 wrong tokens lock an address out; a right token resets the count');
+
 // ---------- drivers ----------
 const all = await json('/admin/drivers?status=all');
 assert.equal(all.length, 3);

@@ -8,6 +8,8 @@ import { createAdminRouter } from './admin.js';
 
 const env = process.env;
 const num = (v: string | undefined, d: number) => (v && !Number.isNaN(Number(v)) ? Number(v) : d);
+// On a hosting platform the app is on the public internet: no dev simulator, and client addresses come from its proxy.
+const production = env.NODE_ENV === 'production' || Boolean(env.RAILWAY_ENVIRONMENT);
 
 const cfg: Config = {
   ...defaultConfig,
@@ -27,7 +29,8 @@ const db = openDb(env.DB_PATH ?? './data.sqlite');
 const telegram = !cloud && env.TELEGRAM_BOT_TOKEN ? new TelegramBot(env.TELEGRAM_BOT_TOKEN, db) : undefined;
 const memory = new MemorySender(true);
 const sender: Sender = cloud ? new CloudSender(env.WA_PHONE_NUMBER_ID!, env.WA_TOKEN!) : telegram ?? memory;
-const channel = cloud ? 'Cloud API' : telegram ? 'TELEGRAM' : 'DEV SIMULATOR (no WA_* env set)';
+const simulator = !cloud && !telegram && !production;
+const channel = cloud ? 'Cloud API' : telegram ? 'TELEGRAM' : simulator ? 'DEV SIMULATOR (no WA_* env set)' : 'NONE';
 const engine = new Engine(db, sender, cfg);
 if (telegram) {
   telegram.run((m) => {
@@ -40,9 +43,10 @@ if (telegram) {
 }
 
 const app = express();
+if (production) app.set('trust proxy', 1); // one proxy hop (the platform's), so req.ip is the real client for the admin lockout
 app.use(express.json({ verify: (req, _res, buf) => { (req as any).rawBody = buf; } }));
 
-app.get('/health', (_req, res) => res.json({ ok: true, whatsapp: cloud ? 'cloud' : telegram ? 'telegram' : 'dev-simulator' }));
+app.get('/health', (_req, res) => res.json({ ok: true, whatsapp: cloud ? 'cloud' : telegram ? 'telegram' : simulator ? 'dev-simulator' : 'none' }));
 
 // ---------- WhatsApp webhook ----------
 app.get('/webhook', (req, res) => {
@@ -72,8 +76,8 @@ app.get('/dashboard', (_req, res) => {
   res.set('Cache-Control', 'no-store').sendFile(fileURLToPath(new URL('../public/admin.html', import.meta.url)));
 });
 
-// ---------- Dev simulator (only when neither WhatsApp nor Telegram is configured) ----------
-if (!cloud && !telegram) {
+// ---------- Dev simulator (only when neither WhatsApp nor Telegram is configured, and never on a host) ----------
+if (simulator) {
   // Inbound messages, each tagged with the outbox length at send time so /sim/chat can interleave both sides.
   const simInbox: { at: number; m: Incoming }[] = [];
   app.post('/sim/send', async (req, res) => {
@@ -102,11 +106,26 @@ if (!cloud && !telegram) {
 }
 
 const port = num(env.PORT, 3000);
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`[goverdhan-sawari] listening on :${port} — channel: ${channel}`);
-  console.log(`[goverdhan-sawari] admin dashboard: http://localhost:${port}/dashboard`);
-  if (!cloud && !telegram) console.log(`[goverdhan-sawari] chat simulator UI: http://localhost:${port}/sim`);
+  console.log(`[goverdhan-sawari] admin dashboard: ${production ? '<your public URL>' : `http://localhost:${port}`}/dashboard`);
+  if (simulator) console.log(`[goverdhan-sawari] chat simulator UI: http://localhost:${port}/sim`);
   if (!env.ADMIN_TOKEN) console.warn('[warn] ADMIN_TOKEN not set — admin API disabled');
   if (cloud && !env.WA_APP_SECRET) console.warn('[warn] WA_APP_SECRET not set — webhook signatures are NOT verified');
+  if (production) {
+    if (channel === 'NONE') console.warn('[warn] no channel configured — set TELEGRAM_BOT_TOKEN, or WA_PHONE_NUMBER_ID and WA_TOKEN');
+    if (!env.DB_PATH) console.warn('[warn] DB_PATH not set — the database is lost on every redeploy. Attach a volume and set DB_PATH=/data/data.sqlite');
+    if (env.ADMIN_TOKEN && env.ADMIN_TOKEN.length < 16) console.warn('[warn] ADMIN_TOKEN is short — this API is on the public internet; use 24+ random characters');
+  }
 });
 setInterval(() => { engine.tick().catch((e) => console.error('[tick]', e)); }, 5000);
+
+// A redeploy sends SIGTERM: stop taking requests and close the database so its write-ahead log is flushed.
+const shutdown = () => {
+  console.log('[goverdhan-sawari] shutting down');
+  server.close();
+  try { db.close(); } catch { /* already closed */ }
+  process.exit(0);
+};
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

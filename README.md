@@ -53,9 +53,28 @@ set -a && source .env && set +a && npm start
 
 Copy `.env.example` → env vars on your host.
 
-## Deploy
+## Deploy (Railway)
 
-Needs a **persistent process + disk** (SQLite file + 5-second scheduler). Use Railway, Render, or Fly.io with a volume mounted at `DB_PATH`. Vercel/serverless will not work as-is. When volume grows, swap SQLite for Postgres (all SQL is in `flow.ts` / `server.ts`).
+The app needs **one always-on process and a disk** (SQLite file, a 5-second scheduler, Telegram polling), so it fits Railway, Fly.io or Render but **not** Vercel/serverless. The repo is ready for Railway: `railway.json` (start command, `/health` check, one replica, restart on failure), `.node-version` (22) and `tsx` as a production dependency.
+
+1. **Use a separate production bot.** Two programs polling the same Telegram token fight each other, so create a second bot with @BotFather (`/newbot`) for production and keep the first for local testing. (Or stop the local one before the host starts.)
+2. **Railway** → New Project → *Deploy from GitHub repo* → this repo.
+3. **Variables** (service → Variables). Do not set `PORT`.
+
+   | Variable | Value |
+   |---|---|
+   | `TELEGRAM_BOT_TOKEN` | the production bot's token |
+   | `ADMIN_TOKEN` | 24+ random characters, e.g. `openssl rand -hex 16`. Anyone with it can see drivers' photos and RCs |
+   | `ADMIN_PHONE` | your number as on Telegram, digits with country code |
+   | `DB_PATH` | `/data/data.sqlite` |
+   | `BRAND`, `PARIKRAMA_FARE_PER_SEAT`, `QUOTE_WINDOW_SEC`, … | optional, see `.env.example` |
+4. **Volume** (service → add a Volume), mount path **`/data`**. Without it every redeploy erases all drivers and rides; the log warns if `DB_PATH` is unset.
+5. **Networking** → *Generate Domain*. The dashboard is at `https://<domain>/dashboard`.
+6. **Check:** the deploy log shows `channel: TELEGRAM` and `[tg] bot @… is live`, and `https://<domain>/health` returns `{"ok":true,"whatsapp":"telegram"}`.
+
+On a host (`RAILWAY_ENVIRONMENT` or `NODE_ENV=production`) the app closes the dev simulator, repeated wrong admin tokens lock an address out (10 in 15 minutes), and it shuts down cleanly on redeploy. Pushing to `main` redeploys; expect a short pause while the volume moves to the new instance. Only one replica may run.
+
+Back up the `/data` volume before relying on it (check what Railway's plan offers). When volume grows, swap SQLite for Postgres (all SQL is in `flow.ts`, `admin.ts`, `telegram.ts`). For WhatsApp later, set `WA_*` and point Meta's webhook at `https://<domain>/webhook`.
 
 ## Admin
 
