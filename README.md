@@ -16,7 +16,7 @@ Free matchmaking, no payments handled (cash/UPI between rider and driver, record
 
 **Trip** — match reveals numbers + pickup pin → driver "arrived" → rider gets a 4-digit code → driver types it to start → "complete" → final fare + cash/UPI → rider confirms "ride done / didn't happen".
 
-**Feedback** — `FEEDBACK_DELAY_SEC` after completion: rider 1–5 stars → tag (polite / on time / fair price / overcharged / unsafe) → optional voice/text note. Driver gives 👍/👎 on the rider. Cancels and no-shows are logged with who and why.
+**Feedback** — `FEEDBACK_DELAY_SEC` after completion: rider 1–5 stars → tag (polite / on time / fair price / overcharged / unsafe) → optional voice/text note (typing "hi" or "ride" there starts a new request instead). Driver gives 👍/👎 on the rider. Cancels and no-shows are logged with who and why.
 
 ## Channels
 
@@ -94,7 +94,7 @@ Set `ADMIN_PHONE` (digits with country code, e.g. `919812345678`) to get a chat 
 - Riders can't also be drivers from the same number. RC/ID are collected as photos only; you verify manually.
 - Interactive limits respected: ≤3 buttons, ≤10 list rows, title lengths clamped.
 - **Dashboard gaps:** voice notes can't be played, there is no button to delete an unfinished sign-up, and photo/RC fetching has only been tried against Telegram (the WhatsApp path is written but untested against live Meta).
-- **Feedback note capture:** anything a rider types right after rating (even "hi") is saved as the feedback note instead of starting a new ride.
+- **Feedback note capture:** a full sentence typed at "Want to say more?" is saved as the note even if it was meant as a new request (e.g. "Need a ride"); the thank-you reply tells the rider to type "hi". Only a bare greeting or ride word starts a new request.
 - Some copy still says "Tap 📎 → Location" (WhatsApp wording); on Telegram the 📍 button does it.
 
 ## Layout

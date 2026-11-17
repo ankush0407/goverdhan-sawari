@@ -210,6 +210,32 @@ assert.equal(d1.rating_count, 1);
 assert.equal(d1.rating_sum, 5);
 step('feedback: stars, tag, note, driver thumbs; duplicate taps ignored');
 
+// A rider who types "hi" at "Want to say more?" wants a new ride; it must not be saved as the feedback note.
+const ride1b = await riderRequest(R1, 'en', 'radha', 2, 27.497, 77.461);
+await pick(D1, `qp:${ride1b}:200`);
+await pick(D1, `qe:${ride1b}:200:5`);
+await advance(181);
+await pick(R1, (last(R1) as Extract<Out, { t: 'list' }>).rows[0].id);
+await pick(D1, `arr:${ride1b}`);
+const otp1b = q<{ otp: string }>('SELECT otp FROM rides WHERE id=?', ride1b).otp;
+await pick(D1, `go:${ride1b}`);
+await say(D1, otp1b);
+await pick(D1, `done:${ride1b}`);
+await pick(D1, `same:${ride1b}`);
+await pick(D1, `pay:${ride1b}:cash:200`);
+await pick(R1, `rc:${ride1b}:yes`);
+await advance(301);
+await pick(R1, `rate:${ride1b}:4`);
+await pick(R1, `tag:${ride1b}:none`);
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', R1).state, 'r_note', 'asked for a note');
+await say(R1, 'Hi');
+const rating1b = q<any>("SELECT rating, note FROM ratings WHERE ride_id=? AND from_role='rider'", ride1b);
+assert.equal(rating1b.note, null, '"Hi" is not saved as the feedback note');
+assert.equal(rating1b.rating, 4, 'the rating itself is kept');
+assert.equal(last(R1).t, 'reqloc', '"Hi" starts a new request');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', R1).state, 'ask_pickup');
+step('"hi" after rating starts a new ride instead of becoming the feedback note');
+
 // ---------------------------------------------------------------- C. fixed parikrama ride, race + cancel
 const ride2 = await riderRequest(R2, 'hi', 'parikrama', 2, 27.497, 77.461);
 const r2 = q<any>('SELECT * FROM rides WHERE id=?', ride2);

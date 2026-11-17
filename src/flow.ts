@@ -203,7 +203,11 @@ export class Engine {
     if (!u.lang) return this.promptLang(u.phone);
     const active = this.activeRide(u.phone);
 
-    if (u.state === 'r_note') return this.saveNote(u, txt, undefined);
+    if (u.state === 'r_note') {
+      // "hi" / "ride" right after rating is a new request, not a feedback note. The rating stays; the note stays empty.
+      if (GREETING.test(txt) || WANTS_RIDE.test(txt)) return this.askPickup(u);
+      return this.saveNote(u, txt, undefined);
+    }
     if (active) return this.say(u.phone, 'rider_busy');
     if (u.state === 'ask_role') return this.askRole(u.phone);
     if (GREETING.test(txt) || u.state === 'idle' || u.state === 'new') return this.askPickup(u);

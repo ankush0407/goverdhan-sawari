@@ -10,6 +10,48 @@ function name given next to each range.
 
 ---
 
+## 2026-11-17 — "hi" after rating starts a new ride instead of becoming the feedback note
+
+Commit `<HASH>` (on top of `9d0494e`). Line numbers below are for that commit.
+Tests: `npm run typecheck`, `npm run sim` (now 16 checks), `npm run sim:tg`, `npm run sim:admin` all pass. The new check was
+also run against the old code and fails there (`"Hi" is not saved as the feedback note — actual: 'Hi'`).
+
+### Why
+
+After a rider rates a ride, the bot asks "Want to say more? Send a voice note or text — or type "skip"". Every text message
+in that step was saved as the feedback note, including "hi". A rider who simply wanted a new ride got a "thank you"
+instead, and the note held junk (ride 1's note read "Need a ride"). The admin dashboard made this visible.
+
+### What the rider experiences
+
+At "Want to say more?", typing **hi, hello, hey, namaste, start, menu, ride, book, book a ride, taxi, sawari** (or the
+Hindi equivalents) now starts a new request (the pickup-location question). The star rating and tag are kept; the note
+stays empty. Any other text is still saved as the note, and "skip" still skips.
+
+### `src/flow.ts` (`riderText`)
+
+| Lines | Change |
+|---|---|
+| 206–210 | The `r_note` branch: if the text is a greeting (`GREETING`, line 55) or a ride word (`WANTS_RIDE`, line 56) it calls `askPickup`, which resets the state and asks for the pickup location; otherwise `saveNote` as before. |
+
+### `src/sim.ts` (16 checks; was 15)
+
+| Lines | Change |
+|---|---|
+| 213–237 | New check: a second ride for the same rider goes through quote, pick, start code, completion, rating 4 and tag "none"; the rider then types "Hi". Asserts the note is still empty, the rating of 4 is kept, the next message is the location request, and the state is `ask_pickup`. |
+
+### `README.md`
+
+Line 19 (feedback flow now mentions this) and line 97 (the gap is narrowed, see below).
+
+### Known gaps
+
+- A full sentence typed at "Want to say more?" is still saved as the note, even if it was a new request ("Need a ride").
+  Only a bare greeting or ride word is recognised, because a longer sentence can just as well be genuine feedback
+  ("I want to ride with him again"). The thank-you reply already tells the rider to type "hi".
+
+---
+
 ## 2026-11-17 — Admin dashboard: drivers with photo/RC, riders, rides with timelines
 
 Commit `4852f76` (on top of `d61ff58`). Line numbers below are for that commit.
