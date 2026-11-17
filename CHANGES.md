@@ -12,7 +12,7 @@ function name given next to each range.
 
 ## 2026-11-17 — Admin dashboard: drivers with photo/RC, riders, rides with timelines
 
-Commit `<HASH>` (on top of `d61ff58`). Line numbers below are for that commit.
+Commit `4852f76` (on top of `d61ff58`). Line numbers below are for that commit.
 Tests: `npm run typecheck`, `npm run sim` (15 flow checks), `npm run sim:tg`, and the new `npm run sim:admin` all pass.
 The page itself was also exercised in the browser against a throwaway copy of the data (all four tabs, wrong and right
 token, enlarging a photo, Approve, expanding a ride, phone-width layout).
