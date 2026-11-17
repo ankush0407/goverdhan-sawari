@@ -92,4 +92,6 @@ src/db.ts         SQLite schema
 src/sim.ts        end-to-end test of the flow
 src/telegram-sim.ts  Telegram adapter test against a fake Bot API
 public/sim.html   dev simulator chat UI + admin panel
+CHANGES.md        what changed, with file and line numbers (newest first)
+CLAUDE.md         working rules, including the rule for keeping CHANGES.md up to date
 ```
