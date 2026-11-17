@@ -70,6 +70,8 @@ export interface Sender {
   image(to: string, mediaId: string, caption: string): Promise<void>;
   location(to: string, lat: number, lng: number, name: string): Promise<void>;
   requestLocation(to: string, body: string): Promise<void>;
+  /** Download an uploaded file by the id we stored (admin dashboard shows driver photos and RCs). Undefined if unavailable. */
+  media?(id: string): Promise<{ contentType: string; data: Buffer } | undefined>;
 }
 
 export class CloudSender implements Sender {
@@ -78,6 +80,22 @@ export class CloudSender implements Sender {
     private token: string,
     private version = 'v21.0',
   ) {}
+
+  /** Two hops: media id → short-lived URL + mime type, then the bytes (both need the bearer token). */
+  async media(id: string) {
+    try {
+      const auth = { Authorization: `Bearer ${this.token}` };
+      const meta = await fetch(`https://graph.facebook.com/${this.version}/${encodeURIComponent(id)}`, { headers: auth, signal: AbortSignal.timeout(15_000) });
+      if (!meta.ok) return undefined;
+      const { url, mime_type } = (await meta.json()) as { url?: string; mime_type?: string };
+      if (!url) return undefined;
+      const file = await fetch(url, { headers: auth, signal: AbortSignal.timeout(30_000) });
+      if (!file.ok) return undefined;
+      return { contentType: mime_type ?? 'application/octet-stream', data: Buffer.from(await file.arrayBuffer()) };
+    } catch {
+      return undefined;
+    }
+  }
 
   private async post(payload: object) {
     const res = await fetch(`https://graph.facebook.com/${this.version}/${this.phoneNumberId}/messages`, {

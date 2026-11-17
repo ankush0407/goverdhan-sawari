@@ -4,6 +4,7 @@ import { openDb } from './db.js';
 import { Engine, defaultConfig, type Config } from './flow.js';
 import { CloudSender, MemorySender, parseWebhook, verifySignature, type Incoming, type Sender } from './whatsapp.js';
 import { TelegramBot } from './telegram.js';
+import { createAdminRouter } from './admin.js';
 
 const env = process.env;
 const num = (v: string | undefined, d: number) => (v && !Number.isNaN(Number(v)) ? Number(v) : d);
@@ -65,59 +66,11 @@ app.post('/webhook', (req, res) => {
 });
 
 // ---------- Admin ----------
-const admin = express.Router();
-admin.use((req, res, next) => {
-  if (!env.ADMIN_TOKEN || req.header('authorization') !== `Bearer ${env.ADMIN_TOKEN}`) return res.sendStatus(401);
-  next();
+app.use('/admin', createAdminRouter({ db, engine, sender, token: env.ADMIN_TOKEN }));
+// The page itself holds no data: it asks for ADMIN_TOKEN, then calls /admin/*.
+app.get('/dashboard', (_req, res) => {
+  res.set('Cache-Control', 'no-store').sendFile(fileURLToPath(new URL('../public/admin.html', import.meta.url)));
 });
-admin.get('/drivers', (req, res) => {
-  const status = String(req.query.status ?? 'pending');
-  res.json(db.prepare('SELECT phone,name,vehicle_no,seats,status,on_duty,rides_done,rating_sum,rating_count,photo_media_id,rc_media_id FROM drivers WHERE status=?').all(status));
-});
-admin.post('/drivers/:phone/approve', async (req, res) => res.json({ ok: await engine.approveDriver(req.params.phone) }));
-admin.post('/drivers/:phone/reject', async (req, res) => res.json({ ok: await engine.rejectDriver(req.params.phone) }));
-
-admin.get('/stats', (_req, res) => {
-  const one = (sql: string) => (db.prepare(sql).get() as any);
-  const total = one('SELECT COUNT(*) c FROM rides').c as number;
-  const byStatus = db.prepare('SELECT status, COUNT(*) c FROM rides GROUP BY status').all();
-  const completed = one("SELECT COUNT(*) c FROM rides WHERE status='completed'").c as number;
-  const matched = one('SELECT COUNT(*) c FROM rides WHERE t_accepted IS NOT NULL').c as number;
-  const ttf = (db.prepare(`SELECT (MIN(q.quoted_at) - r.t_requested)/1000.0 s FROM rides r JOIN quotes q ON q.ride_id=r.id
-    WHERE q.quoted_at IS NOT NULL GROUP BY r.id`).all() as { s: number }[]).map((x) => x.s).sort((a, b) => a - b);
-  const medianTtf = ttf.length ? ttf[Math.floor(ttf.length / 2)] : null;
-  res.json({
-    rides: { total, byStatus, matchRate: total ? matched / total : null, completionRate: total ? completed / total : null },
-    fareTotalRupees: one("SELECT COALESCE(SUM(final_fare),0) s FROM rides WHERE status='completed'").s,
-    avgQuotesPerQuoteRide: one("SELECT AVG(n) a FROM (SELECT COUNT(*) n FROM quotes q JOIN rides r ON r.id=q.ride_id WHERE r.kind='quote' AND q.status IN ('sent','won','lost') GROUP BY q.ride_id)").a,
-    medianSecondsToFirstQuote: medianTtf,
-    drivers: {
-      approved: one("SELECT COUNT(*) c FROM drivers WHERE status='approved'").c,
-      onDutyNow: one('SELECT COUNT(*) c FROM drivers WHERE on_duty=1').c,
-      withAtLeastOneRide: one('SELECT COUNT(*) c FROM drivers WHERE rides_done>0').c,
-    },
-    riders: {
-      unique: one('SELECT COUNT(DISTINCT rider_phone) c FROM rides').c,
-      repeat: one("SELECT COUNT(*) c FROM (SELECT rider_phone FROM rides WHERE status='completed' GROUP BY rider_phone HAVING COUNT(*)>=2)").c,
-    },
-    ratings: { riderToDriverAvg: one("SELECT AVG(rating) a FROM ratings WHERE from_role='rider'").a, driverThumbsUp: one("SELECT AVG(rating) a FROM ratings WHERE from_role='driver'").a },
-    disputedByRider: one("SELECT COUNT(*) c FROM rides WHERE rider_confirmed='no'").c,
-  });
-});
-
-admin.get('/rides.csv', (_req, res) => {
-  const rows = db.prepare(`SELECT r.id, r.kind, r.status, r.drop_text, r.group_size, r.when_text, r.fixed_fare, r.agreed_fare, r.final_fare, r.pay_mode,
-      r.cancelled_by, r.cancel_reason, r.rider_confirmed, r.t_requested, r.t_accepted, r.t_arrived, r.t_started, r.t_completed,
-      r.rider_phone, r.driver_phone,
-      (SELECT rating FROM ratings WHERE ride_id=r.id AND from_role='rider') rider_rating,
-      (SELECT tag FROM ratings WHERE ride_id=r.id AND from_role='rider') rider_tag,
-      (SELECT COUNT(*) FROM quotes WHERE ride_id=r.id AND status IN ('sent','won','lost')) quotes_received
-    FROM rides r ORDER BY r.id`).all() as Record<string, unknown>[];
-  const cols = rows.length ? Object.keys(rows[0]) : [];
-  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-  res.type('text/csv').send([cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n'));
-});
-app.use('/admin', admin);
 
 // ---------- Dev simulator (only when neither WhatsApp nor Telegram is configured) ----------
 if (!cloud && !telegram) {
@@ -151,6 +104,7 @@ if (!cloud && !telegram) {
 const port = num(env.PORT, 3000);
 app.listen(port, () => {
   console.log(`[goverdhan-sawari] listening on :${port} — channel: ${channel}`);
+  console.log(`[goverdhan-sawari] admin dashboard: http://localhost:${port}/dashboard`);
   if (!cloud && !telegram) console.log(`[goverdhan-sawari] chat simulator UI: http://localhost:${port}/sim`);
   if (!env.ADMIN_TOKEN) console.warn('[warn] ADMIN_TOKEN not set — admin API disabled');
   if (cloud && !env.WA_APP_SECRET) console.warn('[warn] WA_APP_SECRET not set — webhook signatures are NOT verified');

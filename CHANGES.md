@@ -10,6 +10,102 @@ function name given next to each range.
 
 ---
 
+## 2026-11-17 — Admin dashboard: drivers with photo/RC, riders, rides with timelines
+
+Commit `<HASH>` (on top of `d61ff58`). Line numbers below are for that commit.
+Tests: `npm run typecheck`, `npm run sim` (15 flow checks), `npm run sim:tg`, and the new `npm run sim:admin` all pass.
+The page itself was also exercised in the browser against a throwaway copy of the data (all four tabs, wrong and right
+token, enlarging a photo, Approve, expanding a ride, phone-width layout).
+
+### Why
+
+Reviewing drivers meant curl commands and a raw database: no photos or RCs, no list of riders, epoch-millisecond times,
+and no ride history. The old simulator page had an admin panel but only works when no chat channel is connected.
+
+### What the admin now experiences
+
+A page at `http://localhost:3000/dashboard` (any channel). Sign in with `ADMIN_TOKEN`. Overview with a "needs attention"
+list; Drivers with photo and RC thumbnails and Approve/Reject; Riders; Rides with India-time stamps, feedback and a
+click-through timeline. `/admin/rides.csv` now has readable India-time stamps plus names and the rider's note.
+
+### `src/admin.ts` (new, 147 lines) — the admin API, moved out of `server.ts` so it can be tested
+
+| Lines | What |
+|---|---|
+| 12–13 | `ist()`: epoch ms → `YYYY-MM-DD HH:MM:SS` India time (used by the CSV). |
+| 15–19 | `safeEq` (constant-time token comparison) and `parseJson`. |
+| 21–27 | `createAdminRouter({ db, engine, sender, token })`; every route needs `Authorization: Bearer <token>`; with no `ADMIN_TOKEN` configured the whole API answers 401 (same as before). |
+| 31–38 | `GET /drivers?status=` — now also `draft` and `all`, with `created_at`, `loc_at`, `lat/lng`, `signup_step` (where an unfinished sign-up stopped) and `chat_name`. Default is still `pending`. |
+| 39–40 | `POST /drivers/:phone/approve` and `/reject` — unchanged. |
+| 43–52 | `GET /media/:kind/:phone` (`photo` or `rc`) — looks the file id up by phone (never takes an id from the caller), asks the chat platform for the bytes, and serves only `image/jpeg\|png\|webp` with `nosniff` (anything else is 415). 404 when there is no file or no way to fetch it. |
+| 55–65 | `GET /riders` — every user who is not in `drivers`, with ride, completed and cancelled counts and last ride time. |
+| 69–85 | `GET /rides?limit=` — newest first: names, route, fares, payment, cancel info, rider rating/tag/note, driver thumb, quotes received. The start code (`otp`) is deliberately left out. |
+| 88–96 | `GET /rides/:id` — the ride's events in order (parsed) and every quote with driver names. |
+| 99–126 | `GET /stats` — moved unchanged, plus `drivers.pending`. |
+| 129–144 | `GET /rides.csv` — `t_*` columns now India time; added `rider_name`, `driver_name`, `rider_note`. |
+
+### `src/server.ts` (112 lines; was 158)
+
+| Lines | Change |
+|---|---|
+| 7 | Imports `createAdminRouter`. |
+| 69 | Mounts it at `/admin`. This replaces the inline admin routes that were at lines 67–120 of `4b2aa3e`. |
+| 71–73 | `GET /dashboard` serves `public/admin.html` (no caching; the page contains no data or token). |
+| 107 | Startup log prints the dashboard URL. |
+
+### `src/telegram.ts` lines 51–63 and `src/whatsapp.ts` lines 74, 85–98 — fetching uploads
+
+`Sender` gets an optional `media(id)` (whatsapp.ts:74). `TelegramBot.media` calls `getFile`, then downloads from Telegram's
+file host. `CloudSender.media` does the two WhatsApp hops (media id → URL, then bytes) with the bearer token. Both return
+`undefined` on any failure. **The WhatsApp version is untested against live Meta.**
+
+### `public/admin.html` (new, 410 lines) — the dashboard
+
+| Lines | What |
+|---|---|
+| 7–111 | Styles: light/dark, phone-friendly (tables and tabs scroll sideways, cards stack under 520px). |
+| 112–144 | Constants (12 h stale-location limit, 2 h stuck-ride limit, labels) and helpers; all times formatted in `Asia/Kolkata`. |
+| 147–158 | State, `api()` (401 → signed out) and `getJSON()`. |
+| 161–177 | `refresh()`: loads stats, drivers, riders and rides together every 10 s and redraws. |
+| 180–195 | `showLogin()`, `signOut()`, `showApp()` — sign-in screen (token kept in this browser's localStorage). |
+| 198–229 | Tabs and badges (`renderBadges`, `setTab`), `renderTab()` (toolbars), `renderList()`. |
+| 231–258 | `match()` search helper and `overview()` — tiles and the "needs attention" list. |
+| 261–290 | `thumb()` and `drivers()` — cards, Approve/Reject (reject asks first), unfinished sign-up step, missing plate/RC and stale-location warnings. |
+| 293–299 | `riders()`. |
+| 302–353 | `driverName()`, `eventText()` (303–320), `rideDetail()` (321–339), `rides()` (340–353) — table, filters, expandable timeline, quotes, details, feedback note. |
+| 355–377 | Images: `showThumb()` and `loadImage()` (362–376) — photos fetched with the token, one shared request across redraws, a failed image retried after 60 s. |
+| 380–407 | One click handler for tabs, rows, photos (lightbox) and buttons (380–401); Escape closes the lightbox; 10-second refresh (405); first load (407). |
+
+All text from users (names, notes) is HTML-escaped before it is shown.
+
+### `src/admin-sim.ts` (new, 189 lines) — `npm run sim:admin`
+
+Seeds two submitted drivers, an unfinished one and a full ride with feedback, then calls the API over HTTP. Checks: token
+rules (56–72), drivers by status and sign-up step (74–88), riders (118–124), rides and timeline
+order and hidden start code (126–151), photos served only as images for known drivers (153–165), stats and CSV times
+(167–180), and that the page carries no token (182–186). `package.json` line 13 adds the `sim:admin` script.
+
+### `README.md` and `CHANGES.md`
+
+README lines 37 (new script), 59–86 (dashboard and API), 96–97 (gaps), 111–113 (layout).
+
+### Also done in this session (data, not code)
+
+The unfinished driver sign-up for +91 82669 80305 (Umesh) was deleted from `telegram.sqlite` at the user's request: one row
+each in `drivers`, `users` and `tg_links`, no rides or quotes. He signed up again three minutes after the dashboard was
+started and is waiting for approval.
+
+### Known gaps
+
+- Voice notes in feedback can't be played in the dashboard (shown as "🎤 voice note").
+- No button to delete an unfinished sign-up.
+- The dashboard is plain HTTP; the token travels unencrypted on the local network. Put it behind HTTPS before using it
+  over the internet.
+- Found while testing: anything a rider types right after rating, even "hi", is saved as the feedback note and no new
+  ride starts (`src/flow.ts` line 206: the `r_note` check runs before the greeting check). Ride 1's note reads "Need a ride".
+
+---
+
 ## 2026-11-17 — Change log and instructions for Claude
 
 Docs only; no code changed, so every line number in the entry below is still valid.

@@ -47,6 +47,21 @@ export class TelegramBot implements Sender {
     return (this.db.prepare('SELECT phone FROM tg_links WHERE chat_id=?').get(chatId) as { phone: string } | undefined)?.phone;
   }
 
+  /** Photo/RC bytes for the admin dashboard: getFile gives a path, then the file is fetched from Telegram's file host. */
+  async media(id: string) {
+    try {
+      const f = (await this.call('getFile', { file_id: id })) as { file_path?: string };
+      if (!f.file_path) return undefined;
+      const res = await fetch(`${this.api.replace('/bot', '/file/bot')}/${f.file_path}`, { signal: AbortSignal.timeout(30_000) });
+      if (!res.ok) return undefined;
+      const ext = f.file_path.split('.').pop()?.toLowerCase();
+      const contentType = res.headers.get('content-type')?.startsWith('image/') ? res.headers.get('content-type')! : ext === 'png' ? 'image/png' : 'image/jpeg';
+      return { contentType, data: Buffer.from(await res.arrayBuffer()) };
+    } catch {
+      return undefined;
+    }
+  }
+
   private async send(to: string, method: string, body: object) {
     const chat_id = this.chatOf(to);
     if (chat_id == null) {

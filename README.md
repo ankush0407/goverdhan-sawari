@@ -34,6 +34,7 @@ The flow (`src/flow.ts`) talks to a `Sender`; the server picks the channel from 
 npm install
 npm run sim        # end-to-end test of the whole flow
 npm run sim:tg     # Telegram adapter against a fake Bot API
+npm run sim:admin  # admin API and dashboard data
 cp .env.example .env   # then fill it in
 set -a && source .env && set +a && npm start
 ```
@@ -56,13 +57,28 @@ Copy `.env.example` → env vars on your host.
 
 Needs a **persistent process + disk** (SQLite file + 5-second scheduler). Use Railway, Render, or Fly.io with a volume mounted at `DB_PATH`. Vercel/serverless will not work as-is. When volume grows, swap SQLite for Postgres (all SQL is in `flow.ts` / `server.ts`).
 
-## Admin (Bearer `ADMIN_TOKEN`)
+## Admin
+
+**Dashboard:** open `http://localhost:3000/dashboard` and enter `ADMIN_TOKEN` (from `.env`). Works in every channel. Tabs:
+
+- **Overview** — headline numbers and a "needs attention" list (drivers waiting for approval, approved without an RC, on duty with a stale location, rides open for more than 2 hours).
+- **Drivers** — cards with the driver's photo and RC (click to enlarge), plate, seats, rating, location freshness, and Approve / Reject. Unfinished sign-ups show the step they stopped at.
+- **Riders** — everyone who is not a driver, with ride counts.
+- **Rides** — newest first, times in India time, feedback at a glance; click a row for the full timeline, every quote, pickup, cancel reason and the rider's note.
+
+The page refreshes every 10 seconds, works on a phone (same Wi-Fi: `http://<your-mac-ip>:3000/dashboard`), and holds no data itself: it calls the API below with the token. It is plain HTTP, so use it on a trusted network or put it behind HTTPS before exposing it to the internet.
+
+**API** (Bearer `ADMIN_TOKEN`):
 
 ```
-GET  /admin/drivers?status=pending
+GET  /admin/drivers?status=pending|approved|rejected|draft|all   (default pending)
 POST /admin/drivers/:phone/approve      (also reject)
+GET  /admin/media/photo/:phone          driver photo (also /rc/:phone), fetched from the chat platform
+GET  /admin/riders                      riders with ride counts
+GET  /admin/rides?limit=200             rides with names, fare, rating, tag, note
+GET  /admin/rides/:id                   that ride's events and quotes
 GET  /admin/stats        match rate, completion rate, time to first quote, repeat riders, ratings
-GET  /admin/rides.csv    one row per ride with every timestamp, fare, rating, tag, cancel reason
+GET  /admin/rides.csv    one row per ride: names, fare, rating, tag, note, cancel reason, India-time stamps
 ```
 Set `ADMIN_PHONE` (digits with country code, e.g. `919812345678`) to get a chat alert with **Approve / Reject** buttons when a driver finishes registering. Only that number can use them.
 
@@ -77,7 +93,8 @@ Set `ADMIN_PHONE` (digits with country code, e.g. `919812345678`) to get a chat 
 - **Disintermediation** is expected once numbers are revealed; the ride log + OTP + ratings are your signal that matches became real rides.
 - Riders can't also be drivers from the same number. RC/ID are collected as photos only; you verify manually.
 - Interactive limits respected: ≤3 buttons, ≤10 list rows, title lengths clamped.
-- **Admin view is API-only** in Telegram/WhatsApp mode: driver photos/RC can't be viewed, and `rides.csv` timestamps are epoch milliseconds. An admin dashboard is the next thing to build.
+- **Dashboard gaps:** voice notes can't be played, there is no button to delete an unfinished sign-up, and photo/RC fetching has only been tried against Telegram (the WhatsApp path is written but untested against live Meta).
+- **Feedback note capture:** anything a rider types right after rating (even "hi") is saved as the feedback note instead of starting a new ride.
 - Some copy still says "Tap 📎 → Location" (WhatsApp wording); on Telegram the 📍 button does it.
 
 ## Layout
@@ -91,6 +108,9 @@ src/server.ts     channel selection, webhook, admin API, dev simulator
 src/db.ts         SQLite schema
 src/sim.ts        end-to-end test of the flow
 src/telegram-sim.ts  Telegram adapter test against a fake Bot API
+src/admin.ts      admin API (drivers, riders, rides, images, stats, CSV)
+src/admin-sim.ts  admin API test against a seeded in-memory database
+public/admin.html admin dashboard page (served at /dashboard)
 public/sim.html   dev simulator chat UI + admin panel
 CHANGES.md        what changed, with file and line numbers (newest first)
 CLAUDE.md         working rules, including the rule for keeping CHANGES.md up to date

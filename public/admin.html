@@ -1,0 +1,410 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sawari Admin</title>
+<style>
+  :root {
+    --bg: #f4f5f7; --panel: #ffffff; --ink: #14181f; --muted: #66707d; --line: #e3e6ea;
+    --accent: #0b7a6b; --accent-ink: #ffffff; --ok: #1a7f45; --ok-bg: #e3f4ea; --warn: #9a6200; --warn-bg: #fdf1d8;
+    --bad: #b3261e; --bad-bg: #fbe5e3; --info: #1d5fb4; --info-bg: #e2edfb; --off: #596270; --off-bg: #eceef1;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1116; --panel: #171b22; --ink: #e8ebf0; --muted: #8b95a3; --line: #272d37;
+      --accent: #2bb5a0; --accent-ink: #04201c; --ok: #6fd69a; --ok-bg: #12301f; --warn: #f0bd5a; --warn-bg: #36290e;
+      --bad: #f2a6a0; --bad-bg: #3a1815; --info: #8db8f2; --info-bg: #152840; --off: #a1abb8; --off-bg: #232933;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.45 -apple-system, system-ui, "Segoe UI", sans-serif; }
+  button { font: inherit; cursor: pointer; }
+  header { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
+  .bar { display: flex; align-items: center; gap: 12px; padding: 10px 16px; flex-wrap: wrap; }
+  .bar h1 { font-size: 16px; margin: 0; margin-right: auto; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+  nav { display: flex; gap: 4px; padding: 0 12px; overflow-x: auto; }
+  nav button { background: none; border: 0; border-bottom: 3px solid transparent; padding: 8px 12px; color: var(--muted); white-space: nowrap; }
+  nav button[aria-selected=true] { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+  .badge { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 0 7px; font-size: 12px; margin-left: 4px; }
+  main { padding: 16px; max-width: 1200px; margin: 0 auto; }
+  .btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 12px; }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .btn.danger { color: var(--bad); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  input, select { font: inherit; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .toolbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .toolbar input[type=search] { flex: 1; min-width: 160px; }
+
+  .login { max-width: 360px; margin: 12vh auto; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; }
+  .login form { display: flex; gap: 8px; margin: 12px 0 6px; }
+  .login input { flex: 1; min-width: 0; }
+  .err { color: var(--bad); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .tile .v { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tile .l { color: var(--muted); font-size: 12px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 22px 0 8px; }
+  .attn { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  .attn li { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 12px; display: flex; gap: 10px; align-items: center; }
+  .attn li.bad { border-left-color: var(--bad); }
+  .attn li span { flex: 1; }
+  .ok-note { background: var(--ok-bg); color: var(--ok); border-radius: 8px; padding: 8px 12px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: flex; gap: 12px; }
+  .imgs { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+  .thumb { width: 84px; height: 84px; border-radius: 8px; border: 1px solid var(--line); background: var(--off-bg); color: var(--muted); font-size: 11px; padding: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; text-align: center; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb.missing { border-style: dashed; color: var(--warn); }
+  .card h3 { margin: 0; font-size: 15px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .card .body { min-width: 0; flex: 1; }
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 8px 0; font-size: 13px; }
+  .kv dt { color: var(--muted); } .kv dd { margin: 0; }
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--off); }
+  .dot.on { background: var(--ok); }
+
+  .chip { display: inline-block; border-radius: 10px; padding: 1px 8px; font-size: 12px; font-weight: 500; background: var(--off-bg); color: var(--off); white-space: nowrap; }
+  .chip.completed, .chip.approved, .chip.won { background: var(--ok-bg); color: var(--ok); }
+  .chip.started, .chip.matched, .chip.arrived { background: var(--info-bg); color: var(--info); }
+  .chip.quoting, .chip.choosing, .chip.pending, .chip.draft { background: var(--warn-bg); color: var(--warn); }
+  .chip.no_quotes, .chip.expired, .chip.rejected { background: var(--bad-bg); color: var(--bad); }
+
+  .tablewrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; white-space: nowrap; }
+  tr.row { cursor: pointer; } tr.row:hover td { background: var(--bg); }
+  tr:last-child td { border-bottom: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .detail td { background: var(--bg); cursor: default; }
+  .detail .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .detail h4 { margin: 0 0 6px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  .timeline { list-style: none; margin: 0; padding: 0; }
+  .timeline li { display: grid; grid-template-columns: 78px 1fr; gap: 8px; padding: 2px 0; }
+  .timeline time { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .note { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; margin-top: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .empty { text-align: center; color: var(--muted); padding: 30px 10px; }
+  .lightbox { position: fixed; inset: 0; background: rgba(0,0,0,.8); display: none; align-items: center; justify-content: center; z-index: 20; }
+  .lightbox.show { display: flex; } .lightbox img { max-width: 94vw; max-height: 92vh; border-radius: 8px; }
+  a { color: var(--info); }
+  @media (max-width: 520px) { .card { flex-direction: column; } .imgs { flex-direction: row; } .cards { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>🛺 Sawari Admin</h1>
+    <span id="updated" class="muted small"></span>
+    <button class="btn" id="refresh" hidden>Refresh</button>
+    <button class="btn" id="logout" hidden>Sign out</button>
+  </div>
+  <nav id="tabs" role="tablist" hidden></nav>
+</header>
+
+<main id="app"></main>
+<div class="lightbox" id="lightbox"><img alt=""></div>
+
+<script>
+'use strict';
+const TZ = 'Asia/Kolkata';
+const STALE_MS = 12 * 3600 * 1000;          // offers only go to drivers who shared a location this recently
+const STUCK_MS = 2 * 3600 * 1000;           // a ride open this long is probably abandoned
+const OPEN_RIDE = ['quoting', 'choosing', 'matched', 'arrived', 'started'];
+const WHEN = { now: 'now', '1h': 'in 1 hour', tom: 'tomorrow' };
+const TAG = { polite: 'polite', ontime: 'on time', fair: 'fair price', overcharged: 'overcharged', unsafe: 'felt unsafe' };
+const STEP = { drv_lang: 'choosing language', drv_name: 'giving their name', drv_vehicle: 'entering vehicle number', drv_seats: 'choosing seats', drv_photo: 'sending own photo', drv_rc: 'sending RC photo' };
+
+// ---------- helpers ----------
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+const fmtDT = (ms) => ms == null ? '—' : new Date(ms).toLocaleString('en-IN', { timeZone: TZ, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit', hour12: true });
+const fmtTS = (ms) => ms == null ? '—' : new Date(ms).toLocaleTimeString('en-IN', { timeZone: TZ, hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+const ago = (ms) => {
+  if (ms == null) return 'never';
+  const m = Math.max(0, (Date.now() - ms) / 60000);
+  if (m < 1.5) return 'just now';
+  if (m < 90) return `${Math.round(m)} min ago`;
+  if (m < 48 * 60) return `${Math.round(m / 60)} h ago`;
+  return `${Math.round(m / 1440)} days ago`;
+};
+const phone = (p) => '+' + p;
+const money = (n) => n == null ? '—' : '₹' + Number(n).toLocaleString('en-IN');
+const pct = (v) => v == null ? '—' : Math.round(v * 100) + '%';
+const chip = (s, label) => `<span class="chip ${esc(s)}">${esc(label ?? String(s).replace('_', ' '))}</span>`;
+const stars = (n) => n == null ? '' : '★'.repeat(n) + '☆'.repeat(Math.max(0, 5 - n));
+
+// ---------- state ----------
+let token = store.get('sawari.admin.token', '');
+let tab = store.get('sawari.admin.tab', 'overview');
+const S = { stats: null, drivers: [], riders: [], rides: [], details: {}, open: new Set(), q: '', driverFilter: 'all', rideFilter: 'all', busy: new Set(), updated: null };
+const imgCache = new Map();                 // "photo:+91…:<media id>" → object URL, or 'none'
+
+async function api(path, opts = {}) {
+  const r = await fetch('/admin' + path, { ...opts, headers: { authorization: 'Bearer ' + token } });
+  if (r.status === 401) throw Object.assign(new Error('unauthorized'), { auth: true });
+  if (!r.ok) throw new Error(`${path} → ${r.status}`);
+  return r;
+}
+const getJSON = async (p) => (await api(p)).json();
+
+// ---------- data ----------
+let loading = false;
+async function refresh() {
+  if (!token || loading) return;
+  loading = true;
+  try {
+    const [stats, drivers, riders, rides] = await Promise.all([getJSON('/stats'), getJSON('/drivers?status=all'), getJSON('/riders'), getJSON('/rides?limit=300')]);
+    Object.assign(S, { stats, drivers, riders, rides, updated: Date.now() });
+    await Promise.all([...S.open].map(async (id) => { try { S.details[id] = await getJSON('/rides/' + id); } catch {} }));
+    $('#updated').textContent = 'Updated ' + fmtTS(S.updated) + ' IST';
+    showApp();
+    renderBadges();
+    renderList();
+  } catch (e) {
+    if (e.auth) { signOut('That token was not accepted. It is ADMIN_TOKEN from the server\'s .env file.'); }
+    else $('#updated').textContent = 'Could not reach the server — retrying…';
+  } finally { loading = false; }
+}
+
+// ---------- views ----------
+function showLogin(msg) {
+  shell = false;                                // the next successful load must rebuild the page
+  $('#tabs').hidden = $('#refresh').hidden = $('#logout').hidden = true;
+  $('#app').innerHTML = `<div class="login"><h2 style="margin-top:0">Admin sign-in</h2>
+    <div class="muted small">Enter the <b>ADMIN_TOKEN</b> from the server's <code>.env</code> file.</div>
+    <form id="loginform"><input id="tok" type="password" autocomplete="current-password" placeholder="Admin token" required><button class="btn primary">Open</button></form>
+    <div class="err small">${esc(msg || '')}</div></div>`;
+  $('#loginform').onsubmit = (e) => { e.preventDefault(); token = $('#tok').value.trim(); store.set('sawari.admin.token', token); $('#app').innerHTML = '<p class="empty">Loading…</p>'; refresh(); };
+}
+function signOut(msg) { token = ''; store.del('sawari.admin.token'); showLogin(msg); }
+
+let shell = false;
+function showApp() {
+  $('#refresh').hidden = $('#logout').hidden = $('#tabs').hidden = false;
+  if (!shell) { shell = true; renderTab(); }
+}
+
+const TABS = [['overview', 'Overview'], ['drivers', 'Drivers'], ['riders', 'Riders'], ['rides', 'Rides']];
+function renderBadges() {
+  const pending = S.drivers.filter((d) => d.status === 'pending').length;
+  $('#tabs').innerHTML = TABS.map(([k, l]) =>
+    `<button role="tab" data-tab="${k}" aria-selected="${k === tab}">${l}${k === 'drivers' && pending ? `<span class="badge">${pending} to approve</span>` : ''}</button>`).join('');
+}
+function setTab(t) { tab = t; store.set('sawari.admin.tab', t); S.q = ''; renderBadges(); renderTab(); }
+
+function renderTab() {
+  const app = $('#app');
+  if (tab === 'drivers') {
+    const counts = {}; S.drivers.forEach((d) => { counts[d.status] = (counts[d.status] || 0) + 1; });
+    app.innerHTML = `<div class="toolbar"><input type="search" id="q" placeholder="Search name, phone, vehicle" value="${esc(S.q)}">
+      <select id="dfilter">${[['all', 'All'], ['pending', 'Waiting for approval'], ['approved', 'Approved'], ['rejected', 'Rejected'], ['draft', 'Unfinished sign-up']]
+        .map(([k, l]) => `<option value="${k}" ${S.driverFilter === k ? 'selected' : ''}>${l}${k !== 'all' && counts[k] ? ` (${counts[k]})` : ''}</option>`).join('')}</select></div><div id="list"></div>`;
+    $('#dfilter').onchange = (e) => { S.driverFilter = e.target.value; renderList(); };
+  } else if (tab === 'riders') {
+    app.innerHTML = `<div class="toolbar"><input type="search" id="q" placeholder="Search name or phone" value="${esc(S.q)}"></div><div id="list"></div>`;
+  } else if (tab === 'rides') {
+    const statuses = [...new Set(S.rides.map((r) => r.status))];
+    app.innerHTML = `<div class="toolbar"><input type="search" id="q" placeholder="Search rider, driver, phone, place" value="${esc(S.q)}">
+      <select id="rfilter"><option value="all">All statuses</option>${statuses.map((s) => `<option value="${esc(s)}" ${S.rideFilter === s ? 'selected' : ''}>${esc(s.replace('_', ' '))}</option>`).join('')}</select></div><div id="list"></div>`;
+    $('#rfilter').onchange = (e) => { S.rideFilter = e.target.value; renderList(); };
+  } else app.innerHTML = '<div id="list"></div>';
+  const q = $('#q'); if (q) q.oninput = () => { S.q = q.value; renderList(); };
+  renderList();
+}
+
+function renderList() {
+  const el = $('#list'); if (!el) return;
+  el.innerHTML = { overview, drivers, riders, rides }[tab]();
+  hydrateImages();
+}
+
+const match = (q, ...fields) => !q || fields.some((f) => String(f ?? '').toLowerCase().includes(q.toLowerCase()));
+
+// ----- overview -----
+function overview() {
+  const s = S.stats; if (!s) return '<p class="empty">Loading…</p>';
+  const tiles = [
+    [s.rides.total, 'Rides requested'], [s.rides.byStatus.find((x) => x.status === 'completed')?.c ?? 0, 'Completed'],
+    [pct(s.rides.completionRate), 'Completion rate'], [pct(s.rides.matchRate), 'Match rate'],
+    [s.medianSecondsToFirstQuote == null ? '—' : Math.round(s.medianSecondsToFirstQuote) + ' s', 'Median time to first quote'],
+    [money(s.fareTotalRupees), 'Fares on completed rides'],
+    [`${s.drivers.approved} / ${s.drivers.onDutyNow}`, 'Drivers approved / on duty'], [s.drivers.pending ?? 0, 'Drivers waiting for approval'],
+    [`${s.riders.unique} / ${s.riders.repeat}`, 'Riders total / repeat'],
+    [s.ratings.riderToDriverAvg == null ? '—' : s.ratings.riderToDriverAvg.toFixed(1) + ' ★', 'Average driver rating'],
+    [s.disputedByRider, 'Rides disputed by rider'],
+  ];
+  const now = Date.now(), items = [];
+  for (const d of S.drivers) {
+    const who = `<b>${esc(d.name || d.chat_name || phone(d.phone))}</b>`;
+    if (d.status === 'pending') items.push({ html: `${who} is waiting for approval`, go: 'drivers', filter: 'pending' });
+    if (d.status === 'approved' && !d.rc_media_id) items.push({ html: `${who} was approved without an RC photo`, go: 'drivers', filter: 'approved' });
+    if (d.status === 'approved' && d.on_duty && (d.loc_at == null || now - d.loc_at > STALE_MS)) items.push({ html: `${who} is on duty but last shared a location ${ago(d.loc_at)}, so gets no ride requests`, go: 'drivers', filter: 'approved' });
+  }
+  for (const r of S.rides) if (OPEN_RIDE.includes(r.status) && now - r.t_requested > STUCK_MS) items.push({ bad: true, html: `Ride #${r.id} has been "${esc(r.status)}" since ${esc(fmtDT(r.t_requested))}; it may be abandoned`, go: 'rides' });
+  return `<div class="tiles">${tiles.map(([v, l]) => `<div class="tile"><div class="v">${esc(v)}</div><div class="l">${esc(l)}</div></div>`).join('')}</div>
+    <h2>Needs attention</h2>
+    ${items.length ? `<ul class="attn">${items.map((i) => `<li class="${i.bad ? 'bad' : ''}"><span>${i.html}</span><button class="btn" data-go="${i.go}" data-filter="${esc(i.filter || '')}">Open</button></li>`).join('')}</ul>` : '<div class="ok-note">Nothing needs attention.</div>'}
+    <h2>Rides by status</h2><div>${s.rides.byStatus.map((x) => `${chip(x.status)} <b>${x.c}</b>&nbsp;&nbsp;`).join('') || '<span class="muted">No rides yet</span>'}</div>`;
+}
+
+// ----- drivers -----
+function thumb(kind, d) {
+  const id = kind === 'photo' ? d.photo_media_id : d.rc_media_id;
+  const label = kind === 'photo' ? 'Photo' : 'RC';
+  if (!id) return `<div class="thumb missing">No ${label}<br>sent</div>`;
+  return `<button class="thumb" data-img="${kind}" data-phone="${esc(d.phone)}" data-mid="${esc(id)}" title="${label}">${label}…</button>`;
+}
+function drivers() {
+  const list = S.drivers.filter((d) => (S.driverFilter === 'all' || d.status === S.driverFilter) && match(S.q, d.name, d.chat_name, d.phone, d.vehicle_no));
+  if (!list.length) return '<p class="empty">No drivers match.</p>';
+  return `<div class="cards">${list.map((d) => {
+    const stale = d.loc_at == null || Date.now() - d.loc_at > STALE_MS;
+    const busy = S.busy.has(d.phone) ? 'disabled' : '';
+    const acts = d.status === 'pending' ? `<button class="btn primary" data-act="approve" data-phone="${esc(d.phone)}" ${busy}>Approve</button><button class="btn danger" data-act="reject" data-phone="${esc(d.phone)}" ${busy}>Reject</button>`
+      : d.status === 'rejected' ? `<button class="btn primary" data-act="approve" data-phone="${esc(d.phone)}" ${busy}>Approve instead</button>`
+      : d.status === 'approved' ? `<button class="btn danger" data-act="reject" data-phone="${esc(d.phone)}" ${busy}>Reject</button>` : '';
+    return `<article class="card"><div class="imgs">${thumb('photo', d)}${thumb('rc', d)}</div><div class="body">
+      <h3>${esc(d.name || d.chat_name || 'Unnamed')} ${d.status === 'draft' ? chip('draft', 'unfinished sign-up') : chip(d.status)}${d.status === 'approved' ? `<span class="small muted"><span class="dot ${d.on_duty ? 'on' : ''}"></span> ${d.on_duty ? 'On duty' : 'Off duty'}</span>` : ''}</h3>
+      <div class="muted small">${esc(phone(d.phone))}</div>
+      <dl class="kv">
+        ${d.status === 'draft' ? `<dt>Sign-up</dt><dd>Unfinished — ${esc(STEP[d.signup_step] || 'in progress')}</dd>` : ''}
+        <dt>Vehicle</dt><dd>${d.vehicle_no ? esc(d.vehicle_no) : '<span class="err">⚠ no number plate</span>'}${d.seats ? ` · ${d.seats} seats` : ''}</dd>
+        <dt>Rides done</dt><dd>${d.rides_done}</dd>
+        <dt>Rating</dt><dd>${d.rating_count ? `★ ${(d.rating_sum / d.rating_count).toFixed(1)} (${d.rating_count})` : 'No ratings yet'}</dd>
+        <dt>Location</dt><dd>${d.loc_at == null ? 'never shared' : `shared ${ago(d.loc_at)}`}${d.on_duty && stale ? ' <span class="err">· stale, gets no requests</span>' : ''}</dd>
+        <dt>Joined</dt><dd>${esc(fmtDT(d.created_at))}</dd>
+      </dl>
+      ${d.status === 'pending' && !d.rc_media_id ? '<div class="small err">RC photo not sent yet</div>' : ''}
+      <div class="actions">${acts}</div></div></article>`;
+  }).join('')}</div>`;
+}
+
+// ----- riders -----
+function riders() {
+  const list = S.riders.filter((r) => match(S.q, r.name, r.phone));
+  if (!list.length) return '<p class="empty">No riders match.</p>';
+  return `<div class="tablewrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Language</th><th>Joined</th><th class="num">Rides</th><th class="num">Completed</th><th class="num">Cancelled</th><th>Last ride</th></tr></thead><tbody>
+    ${list.map((r) => `<tr><td>${esc(r.name || '—')}</td><td>${esc(phone(r.phone))}</td><td>${r.lang === 'hi' ? 'Hindi' : r.lang === 'en' ? 'English' : '—'}</td><td>${esc(fmtDT(r.created_at))}</td>
+      <td class="num">${r.rides}</td><td class="num">${r.completed}</td><td class="num">${r.cancelled}</td><td>${r.last_ride_at ? esc(fmtDT(r.last_ride_at)) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+}
+
+// ----- rides -----
+const driverName = (p) => { const d = S.drivers.find((x) => x.phone === p); return d?.name || d?.chat_name || phone(p); };
+function eventText(e, ride) {
+  const d = e.data || {};
+  switch (e.kind) {
+    case 'requested': return `Ride requested — ${esc(ride.drop_text || d.drop || '')}, ${esc(d.group || ride.group_size || '?')} people`;
+    case 'dispatch': return `Sent to ${esc(d.drivers ?? '?')} driver(s) within ${esc(d.radius ?? '?')} km`;
+    case 'quote': return `Quote from ${esc(driverName(d.driver))}: ${money(d.price)}, ${esc(d.eta)} min away`;
+    case 'quotes_shown': return `Showed ${esc(d.n)} quote(s) to the rider`;
+    case 'matched': return `Matched with ${esc(driverName(d.driver))} at ${money(d.fare)}`;
+    case 'arrived': return 'Driver arrived';
+    case 'started': return 'Ride started (start code entered)';
+    case 'completed': return `Completed — ${money(d.fare)} ${esc(d.mode || '')}`;
+    case 'cancelled': return `Cancelled by ${esc(d.by)}${d.reason ? ` (${esc(d.reason)})` : ''}`;
+    case 'rated': return `Rider gave ${esc(d.n)} ★`;
+    case 'rider_confirmed': return 'Rider confirmed the ride happened';
+    case 'rider_disputed': return 'Rider said the ride did NOT happen';
+    default: return `${esc(e.kind)}${e.data ? ' ' + esc(JSON.stringify(e.data)) : ''}`;
+  }
+}
+function rideDetail(r) {
+  const det = S.details[r.id];
+  const tl = det ? `<ul class="timeline">${det.events.map((e) => `<li><time>${esc(fmtTS(e.at))}</time><span>${eventText(e, r)}</span></li>`).join('') || '<li><span class="muted">No events</span></li>'}</ul>` : '<span class="muted">Loading…</span>';
+  const qs = det ? (det.quotes.length ? `<ul class="timeline">${det.quotes.map((q) => `<li><time>${q.quoted_at ? esc(fmtTS(q.quoted_at)) : '—'}</time><span>${esc(q.driver_name || phone(q.driver_phone))}: ${q.price ? money(q.price) : 'no price'}${q.eta_min ? `, ${q.eta_min} min` : ''} ${q.status === 'pinged' ? chip('draft', 'no reply') : chip(q.status)}</span></li>`).join('')}</ul>` : '<span class="muted">None</span>') : '';
+  const maps = r.pickup_lat != null ? ` · <a href="https://maps.google.com/?q=${r.pickup_lat},${r.pickup_lng}" target="_blank" rel="noopener">pickup on map</a>` : '';
+  return `<tr class="detail"><td colspan="8"><div class="cols">
+    <div><h4>Timeline (India time)</h4>${tl}</div>
+    <div><h4>Quotes</h4>${qs}
+      <h4 style="margin-top:12px">Details</h4>
+      <div>Rider: ${esc(r.rider_name || '—')} ${esc(phone(r.rider_phone))}</div>
+      ${r.driver_phone ? `<div>Driver: ${esc(driverName(r.driver_phone))} ${esc(phone(r.driver_phone))}</div>` : ''}
+      <div>Pickup: ${esc(r.pickup_text || (r.pickup_lat != null ? 'shared location' : '—'))}${maps}</div>
+      <div>Rider confirmed: ${r.rider_confirmed ? (r.rider_confirmed === 'yes' ? 'yes' : '<span class="err">no — disputed</span>') : 'not yet'}</div>
+      ${r.status === 'cancelled' ? `<div>Cancelled by ${esc(r.cancelled_by || '?')}${r.cancel_reason ? ` (${esc(r.cancel_reason)})` : ''}</div>` : ''}
+      ${r.rider_rating != null ? `<div>Rider rating: ${stars(r.rider_rating)}${r.rider_tag && r.rider_tag !== 'none' ? ` · ${esc(TAG[r.rider_tag] || r.rider_tag)}` : ''}</div>` : ''}
+      ${r.driver_thumb != null ? `<div>Driver rated the rider: ${r.driver_thumb ? '👍' : '👎'}</div>` : ''}
+      ${r.rider_note ? `<div class="note">${esc(r.rider_note)}</div>` : ''}${r.rider_voice_note ? '<div class="note">🎤 Voice note (can\'t be played here yet)</div>' : ''}
+    </div></div></td></tr>`;
+}
+function rides() {
+  const list = S.rides.filter((r) => (S.rideFilter === 'all' || r.status === S.rideFilter) && match(S.q, r.rider_name, r.rider_phone, r.driver_name, r.driver_phone, r.drop_text, r.pickup_text, r.id));
+  if (!list.length) return '<p class="empty">No rides match.</p>';
+  return `<div class="tablewrap"><table><thead><tr><th>#</th><th>Requested (IST)</th><th>Rider</th><th>Driver</th><th>Trip</th><th>Status</th><th class="num">Fare</th><th>Feedback</th></tr></thead><tbody>
+    ${list.map((r) => {
+      const fare = r.final_fare ?? r.agreed_fare ?? r.fixed_fare;
+      const fb = [r.rider_rating != null ? `${stars(r.rider_rating)}${r.rider_tag && r.rider_tag !== 'none' ? ' ' + esc(TAG[r.rider_tag] || r.rider_tag) : ''}` : '', r.driver_thumb != null ? (r.driver_thumb ? '👍' : '👎') : '', r.rider_note ? '💬' : '', r.rider_voice_note ? '🎤' : ''].filter(Boolean).join(' ');
+      return `<tr class="row" data-ride="${r.id}"><td>${r.id}</td><td>${esc(fmtDT(r.t_requested))}</td>
+        <td>${esc(r.rider_name || '—')}<div class="muted small">${esc(phone(r.rider_phone))}</div></td>
+        <td>${r.driver_phone ? `${esc(r.driver_name || '—')}<div class="muted small">${esc(phone(r.driver_phone))}</div>` : '<span class="muted">—</span>'}</td>
+        <td>${esc(r.drop_text || '—')}<div class="muted small">${esc(r.group_size)} people · ${esc(WHEN[r.when_text] || r.when_text || '')}${r.kind === 'fixed' ? ' · fixed fare' : ''}</div></td>
+        <td>${chip(r.status)}</td><td class="num">${money(fare)}${r.pay_mode ? `<div class="muted small">${esc(r.pay_mode)}</div>` : ''}</td><td>${fb || '<span class="muted">—</span>'}</td></tr>${S.open.has(r.id) ? rideDetail(r) : ''}`;
+    }).join('')}</tbody></table></div>`;
+}
+
+// ---------- images ----------
+const imgPending = new Map();                   // key → in-flight fetch, so re-renders share one request
+const IMG_RETRY_MS = 60000;                     // a failed image is tried again after this long
+function showThumb(el, v) {
+  if (typeof v === 'string') { el.className = 'thumb'; el.innerHTML = `<img src="${v}" alt="">`; el.dataset.full = v; }
+  else { el.className = 'thumb missing'; el.textContent = 'Can\'t load'; }
+}
+async function loadImage(el) {
+  const { img: kind, phone: p, mid } = el.dataset, key = `${kind}:${p}:${mid}`;
+  let v = imgCache.get(key);                    // object URL (string) or { at } for a failure
+  if (v && typeof v !== 'string' && Date.now() - v.at > IMG_RETRY_MS) v = undefined;
+  if (v === undefined) {
+    if (!imgPending.has(key)) imgPending.set(key, (async () => {
+      try { const r = await api(`/media/${kind}/${encodeURIComponent(p)}`); imgCache.set(key, URL.createObjectURL(await r.blob())); }
+      catch { imgCache.set(key, { at: Date.now() }); }
+      finally { imgPending.delete(key); }
+    })());
+    await imgPending.get(key);
+    v = imgCache.get(key);
+  }
+  showThumb(el, v);
+}
+const hydrateImages = () => document.querySelectorAll('[data-img]').forEach(loadImage);
+
+// ---------- actions ----------
+document.addEventListener('click', async (e) => {
+  const t = e.target.closest('button, tr.row, .lightbox');
+  if (!t) return;
+  if (t.classList.contains('lightbox')) { t.classList.remove('show'); return; }
+  if (t.dataset.tab) return setTab(t.dataset.tab);
+  if (t.dataset.go) { if (t.dataset.filter) S.driverFilter = t.dataset.filter; return setTab(t.dataset.go); }
+  if (t.dataset.img && t.dataset.full) { $('#lightbox img').src = t.dataset.full; $('#lightbox').classList.add('show'); return; }
+  if (t.dataset.ride) {
+    const id = Number(t.dataset.ride);
+    if (S.open.has(id)) { S.open.delete(id); renderList(); return; }
+    S.open.add(id); renderList();
+    try { S.details[id] = await getJSON('/rides/' + id); renderList(); } catch {}
+    return;
+  }
+  if (t.dataset.act) {
+    const p = t.dataset.phone, d = S.drivers.find((x) => x.phone === p), act = t.dataset.act;
+    if (act === 'reject' && !confirm(`Reject ${d?.name || phone(p)}? They will be told, and taken off duty.`)) return;
+    S.busy.add(p); renderList();
+    try { await api(`/drivers/${encodeURIComponent(p)}/${act}`, { method: 'POST' }); } catch { alert('That did not go through. Try again.'); }
+    S.busy.delete(p); await refresh();
+  }
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#lightbox').classList.remove('show'); });
+$('#refresh').onclick = refresh;
+$('#logout').onclick = () => signOut('');
+setInterval(() => { if (!document.hidden) refresh(); }, 10000);
+
+if (token) { $('#app').innerHTML = '<p class="empty">Loading…</p>'; refresh(); } else showLogin('');
+</script>
+</body>
+</html>
