@@ -12,7 +12,7 @@ function name given next to each range.
 
 ## 2026-11-17 — Prepare for Railway: host mode, admin lockout, deploy config
 
-Commit `<HASH>` (on top of `12fc312`). Line numbers below are for that commit.
+Commit `d93a471` (on top of `12fc312`). Line numbers below are for that commit.
 Tests: `npm run typecheck`, `npm run sim`, `npm run sim:tg` and `npm run sim:admin` (with the new lockout check) all pass.
 Also checked by hand: a clean copy of the project installed with `npm ci --omit=dev` (what a host does) and started with
 `RAILWAY_ENVIRONMENT=production`: it starts, `/health` answers, `/dashboard` is served, `/sim`, `/sim/send` and `/sim/outbox`
