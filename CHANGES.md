@@ -12,7 +12,7 @@ function name given next to each range.
 
 ## 2026-11-17 — "hi" after rating starts a new ride instead of becoming the feedback note
 
-Commit `<HASH>` (on top of `9d0494e`). Line numbers below are for that commit.
+Commit `a47a5b5` (on top of `9d0494e`). Line numbers below are for that commit.
 Tests: `npm run typecheck`, `npm run sim` (now 16 checks), `npm run sim:tg`, `npm run sim:admin` all pass. The new check was
 also run against the old code and fails there (`"Hi" is not saved as the feedback note — actual: 'Hi'`).
 
