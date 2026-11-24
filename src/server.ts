@@ -1,4 +1,5 @@
 import express from 'express';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { Engine, defaultConfig, type Config } from './flow.js';
@@ -26,7 +27,10 @@ const cfg: Config = {
 };
 
 const cloud = Boolean(env.WA_PHONE_NUMBER_ID && env.WA_TOKEN);
-const db = openDb(env.DB_PATH ?? './data.sqlite');
+const dbPath = env.DB_PATH ?? './data.sqlite';
+const db = openDb(dbPath);
+// The dashboard can erase test data only while ALLOW_DATA_RESET=true. Turn it off before real users arrive.
+const allowReset = env.ALLOW_DATA_RESET === 'true';
 // Telegram is a stand-in for WhatsApp while Meta approval is pending; WhatsApp wins if both are configured.
 const telegram = !cloud && env.TELEGRAM_BOT_TOKEN ? new TelegramBot(env.TELEGRAM_BOT_TOKEN, db) : undefined;
 const memory = new MemorySender(true);
@@ -73,7 +77,8 @@ app.post('/webhook', (req, res) => {
 
 // ---------- Admin ----------
 app.use('/admin', createAdminRouter({
-  db, engine, sender, token: env.ADMIN_TOKEN,
+  db, engine, sender, token: env.ADMIN_TOKEN, allowReset, adminPhone: env.ADMIN_PHONE,
+  backupDir: dbPath === ':memory:' ? undefined : join(dirname(dbPath), 'backups'), // next to the database, so on the volume
   // The dashboard opened from the bot's /admin button signs in as the Telegram account linked to ADMIN_PHONE.
   telegramAuth: telegram && env.TELEGRAM_BOT_TOKEN && env.ADMIN_PHONE
     ? { botToken: env.TELEGRAM_BOT_TOKEN, isAdmin: (id) => telegram.isLinked(env.ADMIN_PHONE!.replace(/\D/g, ''), id) }
@@ -119,6 +124,7 @@ const server = app.listen(port, () => {
   console.log(`[goverdhan-sawari] admin dashboard: ${production ? '<your public URL>' : `http://localhost:${port}`}/dashboard`);
   if (simulator) console.log(`[goverdhan-sawari] chat simulator UI: http://localhost:${port}/sim`);
   if (!env.ADMIN_TOKEN) console.warn('[warn] ADMIN_TOKEN not set — admin API disabled');
+  if (allowReset) console.warn('[warn] ALLOW_DATA_RESET is on: the admin can erase all data from the dashboard. Turn it off before real drivers and riders use this.');
   if (!cfg.publicUrl && env.ADMIN_PHONE) console.warn('[warn] PUBLIC_URL not set — the admin /admin command cannot offer the dashboard button');
   if (cloud && !env.WA_APP_SECRET) console.warn('[warn] WA_APP_SECRET not set — webhook signatures are NOT verified');
   if (production) {

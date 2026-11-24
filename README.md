@@ -67,6 +67,7 @@ The app needs **one always-on process and a disk** (SQLite file, a 5-second sche
    | `ADMIN_TOKEN` | 24+ random characters, e.g. `openssl rand -hex 16`. Anyone with it can see drivers' photos and RCs |
    | `ADMIN_PHONE` | your number as on Telegram, digits with country code |
    | `PUBLIC_URL` | optional: `https://<your-domain>`; used for the admin's Open-dashboard button. Railway fills it in itself once a domain exists |
+   | `ALLOW_DATA_RESET` | `true` only while testing: lets the dashboard's Settings tab erase data. Remove it before real users arrive |
    | `DB_PATH` | `/data/data.sqlite` |
    | `BRAND`, `PARIKRAMA_FARE_PER_SEAT`, `QUOTE_WINDOW_SEC`, … | optional, see `.env.example` |
 4. **Volume** (service → add a Volume), mount path **`/data`**. Without it every redeploy erases all drivers and rides; the log warns if `DB_PATH` is unset.
@@ -85,6 +86,7 @@ Back up the `/data` volume before relying on it (check what Railway's plan offer
 - **Drivers** — cards with the driver's photo and RC (click to enlarge), plate, seats, rating, location freshness, and Approve / Reject. Unfinished sign-ups show the step they stopped at.
 - **Riders** — everyone who is not a driver, with ride counts.
 - **Rides** — newest first, times in India time, feedback at a glance; click a row for the full timeline, every quote, pickup, cancel reason and the rider's note.
+- **Settings** — **Reset test data**, to run the flow again from the start. *Clear rides and feedback* keeps drivers and riders; *Reset everything* also removes every driver and rider (the admin's Telegram link is kept, so the dashboard keeps working). Both need `DELETE` typed to confirm, and a copy of the database is saved to a `backups` folder next to it first (the newest 5 are kept). **Off unless `ALLOW_DATA_RESET=true`** — turn it off before real drivers and riders use the app.
 
 **Open it inside Telegram:** send `/admin` (or `admin`) to the bot from the admin account (the number in `ADMIN_PHONE`). The bot replies with an **Open dashboard** button that opens the dashboard as a Telegram mini-app, already signed in: Telegram passes signed launch data, the server checks the signature against the bot token and that the account is the one linked to `ADMIN_PHONE`, so no password is typed. Anyone else who sends `/admin` gets nothing, and the `ADMIN_TOKEN` password still works in a normal browser. Needs `PUBLIC_URL` (an `https` address; on Railway it is filled in from the generated domain).
 

@@ -1,8 +1,10 @@
 // Admin API test: in-memory DB, the real Engine, and a throwaway HTTP server. Run with `npm run sim:admin`.
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import express from 'express';
 import { createAdminRouter, ist } from './admin.js';
 import { openDb } from './db.js';
@@ -247,6 +249,84 @@ assert.ok(row.includes('"2023-11-15 03:43:20"'), 'CSV times are readable India t
 assert.ok(!/"\d{13}"/.test(row), 'no raw epoch milliseconds left');
 assert.ok(row.includes('"Very polite and on time"') && row.includes('"Ramesh Kumar"'));
 step('stats include pending drivers; CSV has names, notes and readable India-time stamps');
+
+// ---------- resetting test data ----------
+const postJson = (url: string, body: unknown, token: string | null = 'tok') =>
+  fetch(url, { method: 'POST', headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const counts = () => Object.fromEntries(['users', 'drivers', 'rides', 'quotes', 'ratings', 'events'].map((t) => [t, (db.prepare(`SELECT COUNT(*) c FROM ${t}`).get() as { c: number }).c]));
+assert.equal((await postJson(`${base}/admin/reset`, { scope: 'everything', confirm: 'DELETE' })).status, 403, 'reset is refused unless the server turns it on');
+assert.deepEqual(await json('/admin/config'), { resetEnabled: false });
+const seeded = counts();
+assert.ok(seeded.rides > 0 && seeded.drivers > 0 && seeded.users > 0 && seeded.ratings > 0 && seeded.events > 0 && seeded.quotes > 0, 'there is data to erase');
+
+const tmp = mkdtempSync(join(tmpdir(), 'sawari-reset-'));
+const backupDir = join(tmp, 'backups');
+db.exec('CREATE TABLE IF NOT EXISTS tg_links (phone TEXT PRIMARY KEY, chat_id INTEGER NOT NULL UNIQUE)');
+db.prepare('INSERT INTO tg_links(phone, chat_id) VALUES (?, 1), (?, 2)').run(ADMIN, R1);
+db.prepare("UPDATE users SET state='r_note', ctx='{\"rideId\":1}' WHERE phone=?").run(R1); // a rider part-way through feedback
+const rr = express();
+rr.use('/admin', createAdminRouter({ db, engine, sender: wa, token: 'tok', allowReset: true, backupDir, adminPhone: '+91 90000 00000' }));
+const s6 = rr.listen(0);
+const rbase = `http://127.0.0.1:${(s6.address() as AddressInfo).port}`;
+const reset = (body: unknown, token: string | null = 'tok') => postJson(`${rbase}/admin/reset`, body, token);
+assert.deepEqual(await (await fetch(`${rbase}/admin/config`, { headers: { authorization: 'Bearer tok' } })).json(), { resetEnabled: true });
+
+// refusals leave everything as it was and write no backup
+assert.equal((await reset({ scope: 'everything', confirm: 'DELETE' }, null)).status, 401, 'needs the admin token');
+assert.equal((await reset({ scope: 'everything' })).status, 400, 'no confirmation');
+assert.equal((await reset({ scope: 'everything', confirm: 'delete' })).status, 400, 'confirmation must be exactly DELETE');
+assert.equal((await reset({ scope: 'users', confirm: 'DELETE' })).status, 400, 'unknown scope');
+assert.equal((await postJson(`${rbase}/admin/reset`, 'not an object')).status, 400, 'garbage body');
+assert.deepEqual(counts(), seeded, 'refused requests deleted nothing');
+assert.deepEqual(readdirSync(tmp), [], 'and made no backup');
+
+// scope "rides": rides and everything about them go; drivers and riders stay
+const res1 = await reset({ scope: 'rides', confirm: 'DELETE' });
+assert.equal(res1.status, 200);
+const out1 = await res1.json() as any;
+assert.equal(out1.deleted.rides, seeded.rides, 'reports what it deleted');
+assert.deepEqual(counts(), { ...seeded, rides: 0, quotes: 0, ratings: 0, events: 0 });
+const d1 = db.prepare('SELECT rides_done, rating_sum, rating_count FROM drivers WHERE phone=?').get(D1) as any;
+assert.deepEqual(d1, { rides_done: 0, rating_sum: 0, rating_count: 0 }, 'driver counters reset');
+assert.equal((db.prepare('SELECT state FROM users WHERE phone=?').get(R1) as any).state, 'idle', 'a rider mid-feedback goes back to idle');
+assert.equal((db.prepare('SELECT state FROM users WHERE phone=?').get(D3) as any).state, 'drv_vehicle', 'a sign-up in progress is kept');
+assert.equal(db.prepare("SELECT seq FROM sqlite_sequence WHERE name='rides'").get(), undefined, 'ride numbers start at 1 again');
+const backups1 = readdirSync(backupDir);
+assert.equal(backups1.length, 1);
+assert.ok(backups1[0].endsWith('-rides.sqlite') && out1.backup === backups1[0]);
+const snap = openDb(join(backupDir, backups1[0]));
+assert.equal((snap.prepare('SELECT COUNT(*) c FROM rides').get() as any).c, seeded.rides, 'the backup holds the data from before the reset');
+assert.equal((snap.prepare('SELECT COUNT(*) c FROM drivers').get() as any).c, seeded.drivers);
+snap.close();
+
+// scope "everything": drivers and riders go too; only the admin's Telegram link survives
+const res2 = await reset({ scope: 'everything', confirm: 'DELETE' });
+assert.equal(res2.status, 200);
+assert.deepEqual(counts(), { users: 0, drivers: 0, rides: 0, quotes: 0, ratings: 0, events: 0 });
+assert.deepEqual(db.prepare('SELECT phone FROM tg_links').all(), [{ phone: ADMIN }], 'the admin stays linked, so the dashboard keeps working');
+assert.equal((await (await fetch(`${rbase}/admin/stats`, { headers: { authorization: 'Bearer tok' } })).json() as any).rides.total, 0, 'the dashboard API reads an empty database');
+// the app runs the flow again from a clean slate
+await say(R1, 'hi', 'Rider One');
+assert.equal(wa.last(R1).t, 'buttons', 'a reset rider starts over at the language question');
+await say(D1, 'driver');
+assert.equal(wa.last(D1).t, 'buttons', 'a reset driver starts sign-up again');
+
+// only the newest 5 backups are kept
+for (let i = 0; i < 6; i++) assert.equal((await reset({ scope: 'rides', confirm: 'DELETE' })).status, 200);
+assert.equal(readdirSync(backupDir).length, 5, 'older backups are pruned');
+
+// no backup, no deletion
+writeFileSync(join(tmp, 'blocker'), 'a file where a folder is needed');
+const bad = express();
+bad.use('/admin', createAdminRouter({ db, engine, sender: wa, token: 'tok', allowReset: true, backupDir: join(tmp, 'blocker', 'sub') }));
+const s7 = bad.listen(0);
+db.prepare("INSERT INTO rides(rider_phone, status, t_requested) VALUES ('x', 'completed', 1)").run();
+const failed = await postJson(`http://127.0.0.1:${(s7.address() as AddressInfo).port}/admin/reset`, { scope: 'everything', confirm: 'DELETE' });
+assert.equal(failed.status, 500, 'a failed backup stops the reset');
+assert.equal(counts().rides, 1, 'and nothing was deleted');
+s6.close(); s7.close();
+rmSync(tmp, { recursive: true, force: true });
+step('reset: off unless enabled, exact DELETE confirmation, backup first (kept to 5), "rides" keeps people, "everything" keeps only the admin\'s link, no backup means no deletion');
 
 // ---------- the page ----------
 const page = readFileSync(new URL('../public/admin.html', import.meta.url), 'utf8');

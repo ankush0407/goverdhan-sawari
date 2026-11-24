@@ -10,6 +10,94 @@ function name given next to each range.
 
 ---
 
+## 2026-11-24 — Erase test data from the dashboard (Settings → Reset test data)
+
+Commit `<HASH>` (on top of `e5e09e4`). Line numbers below are for that commit.
+Tests: `npm run typecheck`, `npm run sim`, `npm run sim:tg` and `npm run sim:admin` (new reset checks) all pass. Each safety
+guard (the typed confirmation, "no backup, no deletion", and "off unless enabled") was removed on purpose once to confirm the
+tests fail without it, then restored. The Settings tab was also used in a browser against a throwaway copy of the data: both
+options, the disabled button until exactly `DELETE` is typed, the typed text surviving the 10-second refresh, the result message
+naming the backup, the backup file holding the pre-reset data, and the "switched off" page.
+
+### Why
+
+To run the whole flow again (sign-ups, bookings, feedback) the old test data had to be cleared, and the only way was to touch
+the database by hand. On a live server a button like that must be hard to press by accident and impossible to press when it
+should not exist.
+
+### What the admin experiences
+
+A new **Settings** tab with **Reset test data**. Two choices:
+- **Clear rides and feedback** deletes rides, their quotes, ratings and notes. Drivers and riders stay; each driver's ride count
+  and rating go back to zero, and anyone part-way through a ride or feedback returns to idle (a sign-up in progress is kept).
+- **Reset everything** also deletes every driver and rider, so everyone starts over, and every Telegram link except the admin's
+  (so the dashboard keeps working). Ride numbers start again at 1.
+
+Either one asks for `DELETE` to be typed exactly. Before anything is erased a copy of the database is saved in a `backups`
+folder beside it (on Railway, the volume); the newest 5 are kept. If that copy cannot be saved, nothing is deleted.
+
+### The guards
+
+- **Off by default.** The endpoint answers 403 unless the server runs with `ALLOW_DATA_RESET=true`; the Settings tab then says
+  how to turn it on. A stolen admin token therefore cannot wipe a live service. Turn the variable off before real users arrive.
+- The API needs `{"scope": "rides"|"everything", "confirm": "DELETE"}`; anything else is a 400 and changes nothing.
+- The server logs every reset, and warns at startup while the switch is on.
+
+### `src/admin.ts` (now 241 lines)
+
+| Lines | Change |
+|---|---|
+| 4–5 | Imports `mkdirSync`, `readdirSync`, `rmSync`, `join`. |
+| 17–21 | `Deps` gains `allowReset`, `backupDir`, `adminPhone`. |
+| 36 | `createAdminRouter` takes them (`allowReset` defaults to false). |
+| 184–189 | `GET /config` returns `{ resetEnabled }` (the dashboard uses it); helpers `TABLES` and `count`. |
+| 196–232 | `POST /reset`: refuses with 403 when off and 400 without the exact confirmation; counts what will go; saves the backup first with `VACUUM INTO` (209) and prunes to the newest 5, answering 500 and deleting nothing if that fails; then one transaction (216–230) deletes quotes, ratings, events and rides, resets driver counters and idles non-sign-up users (scope `rides`) or deletes drivers, users and all Telegram links except the admin's (scope `everything`), and restarts the id counters. Returns what was deleted and the backup name. |
+| 234–238 | A malformed JSON body now answers 400 instead of Express printing a stack trace into the log. |
+
+### `src/server.ts` (now 146 lines)
+
+| Lines | Change |
+|---|---|
+| 2 | Imports `dirname`, `join`. |
+| 30, 33 | `dbPath`; `allowReset` is true only for `ALLOW_DATA_RESET=true`. |
+| 80–81 | Passes `allowReset`, `adminPhone` and `backupDir` (a `backups` folder next to the database; none for an in-memory one). |
+| 127 | Startup warning while the reset switch is on. |
+
+### `public/admin.html` (now 488 lines)
+
+| Lines | Change |
+|---|---|
+| 92–100 | Styles for the danger zone, the two choices and the confirmation row. |
+| 171 | State for the reset (scope, typed text, busy, result). |
+| 175–179 | `api()` merges caller headers and shows the server's own refusal message. |
+| 192 | The refresh also loads `/config`. |
+| 225 | New **Settings** tab. |
+| 253–258 | `renderList(force)`: the Settings tab is not redrawn by the 10-second refresh, so a typed word is not wiped. |
+| 292–313 | `settings()`: the two choices with live counts, the typed-confirmation box, the result message, or the "switched off" note. |
+| 449–467 | Click handling: open a choice, cancel, run (sends the request, shows the result, reloads the data). |
+| 474–479 | Keeps the Delete button disabled until the box holds exactly `DELETE`. |
+
+### Tests: `src/admin-sim.ts` lines 253–329 (now 338 lines)
+
+Reset refused (403) and `/config` says off when not enabled; refusals (no token, no/lowercase confirmation, unknown scope,
+garbage body) delete nothing and write no backup; scope `rides` deletes exactly rides, quotes, ratings and events, resets
+driver counters, idles a rider mid-feedback, keeps a driver's sign-up in progress, restarts ride numbering, and the backup
+holds the data from before; scope `everything` empties users and drivers and leaves only the admin's Telegram link, after which
+the engine runs the flow again for a reset rider and driver; backups are pruned to 5; a backup folder that cannot be created
+returns 500 and deletes nothing.
+
+### Docs and configuration
+
+`README.md` lines 70 (variable table) and 89 (Settings tab); `.env.example` lines 11–13.
+
+### Known gaps
+
+- Backups stay on the server's disk; there is no download button yet.
+- No "undo" in the dashboard: restoring a backup means copying the file over the database while the app is stopped.
+- Reset is all-or-nothing by scope; there is no way to delete a single driver or ride.
+
+---
+
 ## 2026-11-24 — Open the admin dashboard inside Telegram (`/admin` mini-app, signed-in automatically)
 
 Commit `81da975` (on top of `4a0adee`). Line numbers below are for that commit.

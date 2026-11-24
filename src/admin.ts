@@ -1,6 +1,8 @@
 // Admin API: JSON behind ADMIN_TOKEN for the dashboard (public/admin.html), plus the original
 // driver / stats / CSV endpoints. Mounted at /admin by server.ts.
 import { timingSafeEqual } from 'node:crypto';
+import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import express from 'express';
 import type { DB } from './db.js';
 import type { Engine } from './flow.js';
@@ -11,6 +13,12 @@ type Deps = {
   db: DB; engine: Engine; sender: Sender; token: string | undefined;
   /** Lets the dashboard sign in from a Telegram mini-app: valid launch data from the admin's own Telegram account. */
   telegramAuth?: { botToken: string; isAdmin: (telegramId: number) => boolean };
+  /** POST /reset erases data. Off unless the server turns it on (ALLOW_DATA_RESET), so a stolen token cannot wipe a live service. */
+  allowReset?: boolean;
+  /** Where a copy of the database is saved before every reset (the newest 5 are kept). No backup when unset. */
+  backupDir?: string;
+  /** The admin's number: its Telegram link survives a full reset so the dashboard keeps working. */
+  adminPhone?: string;
   /** Wrong tokens allowed per address within the window before it is locked out (the correct token is refused too). */
   maxFailures?: number; windowMs?: number;
 };
@@ -25,7 +33,7 @@ const safeEq = (a: string, b: string) => {
 };
 const parseJson = (s: string | null) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
 
-export function createAdminRouter({ db, engine, sender, token, telegramAuth, maxFailures = 10, windowMs = 15 * 60_000 }: Deps) {
+export function createAdminRouter({ db, engine, sender, token, telegramAuth, allowReset = false, backupDir, adminPhone, maxFailures = 10, windowMs = 15 * 60_000 }: Deps) {
   const admin = express.Router();
 
   /** `Authorization: Bearer <ADMIN_TOKEN>`, or `tma <Telegram launch data>` from the admin's own Telegram account. */
@@ -171,6 +179,62 @@ export function createAdminRouter({ db, engine, sender, token, telegramAuth, max
     const cols = rows.length ? Object.keys(rows[0]) : [];
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     res.type('text/csv').send([cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n'));
+  });
+
+  // ---------- data reset (for testing) ----------
+  /** What the dashboard needs to know about this server's settings. */
+  admin.get('/config', (_req, res) => res.json({ resetEnabled: allowReset }));
+
+  const TABLES = ['users', 'drivers', 'rides', 'quotes', 'ratings', 'events'] as const;
+  const count = (t: string) => (db.prepare(`SELECT COUNT(*) c FROM ${t}`).get() as { c: number }).c;
+
+  /**
+   * Erase data so the flow can be run again. scope "rides": rides, quotes, ratings and events go; drivers and riders stay
+   * (driver counters reset, anyone mid-ride goes back to idle). scope "everything": all of that plus drivers and riders, and
+   * every Telegram link except the admin's. A copy of the database is saved first, and nothing is deleted if that fails.
+   */
+  admin.post('/reset', express.json({ limit: '1kb' }), (req, res) => {
+    if (!allowReset) return res.status(403).json({ error: 'Data reset is switched off on this server. Set ALLOW_DATA_RESET=true to turn it on.' });
+    const { scope, confirm } = (req.body ?? {}) as { scope?: string; confirm?: string };
+    if ((scope !== 'rides' && scope !== 'everything') || confirm !== 'DELETE') {
+      return res.status(400).json({ error: 'Send {"scope":"rides"|"everything","confirm":"DELETE"}.' });
+    }
+    const deleted = Object.fromEntries(TABLES.map((t) => [t, count(t)]));
+
+    let backup: string | null = null;
+    if (backupDir) {
+      try {
+        mkdirSync(backupDir, { recursive: true });
+        backup = `reset-${new Date().toISOString().replace(/[:.]/g, '-')}-${scope}.sqlite`;
+        db.prepare('VACUUM INTO ?').run(join(backupDir, backup));
+        for (const f of readdirSync(backupDir).filter((n) => /^reset-.*\.sqlite$/.test(n)).sort().reverse().slice(5)) rmSync(join(backupDir, f), { force: true });
+      } catch (e) {
+        return res.status(500).json({ error: `Could not save a backup, so nothing was deleted: ${(e as Error).message}` });
+      }
+    }
+
+    db.transaction(() => {
+      for (const t of ['quotes', 'ratings', 'events', 'rides']) db.prepare(`DELETE FROM ${t}`).run();
+      if (scope === 'rides') {
+        db.prepare('UPDATE drivers SET rides_done=0, rating_sum=0, rating_count=0').run();
+        db.prepare("UPDATE users SET state='idle', ctx='{}' WHERE substr(state, 1, 4) <> 'drv_'").run(); // keep sign-ups in progress
+      } else {
+        db.prepare('DELETE FROM drivers').run();
+        db.prepare('DELETE FROM users').run();
+        if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tg_links'").get()) {
+          db.prepare('DELETE FROM tg_links WHERE phone <> ?').run((adminPhone ?? '').replace(/\D/g, ''));
+        }
+      }
+      db.prepare("DELETE FROM sqlite_sequence WHERE name IN ('rides','quotes','ratings','events')").run(); // ids start at 1 again
+    })();
+    console.warn(`[admin] data reset (${scope}); backup: ${backup ?? 'none'}`);
+    res.json({ ok: true, scope, deleted, backup });
+  });
+
+  // A malformed JSON body is the caller's mistake: answer 400 instead of letting Express log a stack trace.
+  admin.use((err: { type?: string }, _req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'The request body is not valid JSON.' });
+    next(err);
   });
 
   return admin;
