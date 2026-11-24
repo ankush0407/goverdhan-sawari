@@ -21,6 +21,8 @@ const cfg: Config = {
   wideKm: num(env.WIDE_KM, defaultConfig.wideKm),
   feedbackDelaySec: num(env.FEEDBACK_DELAY_SEC, defaultConfig.feedbackDelaySec),
   adminPhone: env.ADMIN_PHONE,
+  // Where the admin's "Open dashboard" button points. Railway fills RAILWAY_PUBLIC_DOMAIN in once a domain exists.
+  publicUrl: env.PUBLIC_URL ?? (env.RAILWAY_PUBLIC_DOMAIN ? `https://${env.RAILWAY_PUBLIC_DOMAIN}` : undefined),
 };
 
 const cloud = Boolean(env.WA_PHONE_NUMBER_ID && env.WA_TOKEN);
@@ -70,7 +72,13 @@ app.post('/webhook', (req, res) => {
 });
 
 // ---------- Admin ----------
-app.use('/admin', createAdminRouter({ db, engine, sender, token: env.ADMIN_TOKEN }));
+app.use('/admin', createAdminRouter({
+  db, engine, sender, token: env.ADMIN_TOKEN,
+  // The dashboard opened from the bot's /admin button signs in as the Telegram account linked to ADMIN_PHONE.
+  telegramAuth: telegram && env.TELEGRAM_BOT_TOKEN && env.ADMIN_PHONE
+    ? { botToken: env.TELEGRAM_BOT_TOKEN, isAdmin: (id) => telegram.isLinked(env.ADMIN_PHONE!.replace(/\D/g, ''), id) }
+    : undefined,
+}));
 // The page itself holds no data: it asks for ADMIN_TOKEN, then calls /admin/*.
 app.get('/dashboard', (_req, res) => {
   res.set('Cache-Control', 'no-store').sendFile(fileURLToPath(new URL('../public/admin.html', import.meta.url)));
@@ -111,6 +119,7 @@ const server = app.listen(port, () => {
   console.log(`[goverdhan-sawari] admin dashboard: ${production ? '<your public URL>' : `http://localhost:${port}`}/dashboard`);
   if (simulator) console.log(`[goverdhan-sawari] chat simulator UI: http://localhost:${port}/sim`);
   if (!env.ADMIN_TOKEN) console.warn('[warn] ADMIN_TOKEN not set — admin API disabled');
+  if (!cfg.publicUrl && env.ADMIN_PHONE) console.warn('[warn] PUBLIC_URL not set — the admin /admin command cannot offer the dashboard button');
   if (cloud && !env.WA_APP_SECRET) console.warn('[warn] WA_APP_SECRET not set — webhook signatures are NOT verified');
   if (production) {
     if (channel === 'NONE') console.warn('[warn] no channel configured — set TELEGRAM_BOT_TOKEN, or WA_PHONE_NUMBER_ID and WA_TOKEN');

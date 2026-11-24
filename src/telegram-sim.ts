@@ -19,7 +19,7 @@ let clock = 1_700_000_000_000;
 const db = openDb(':memory:');
 const ADMIN = '919000000000';
 const bot = new TelegramBot('TEST', db);
-const engine = new Engine(db, bot, { ...defaultConfig, adminPhone: ADMIN }, () => clock);
+const engine = new Engine(db, bot, { ...defaultConfig, adminPhone: ADMIN, publicUrl: 'https://sawari.example' }, () => clock);
 
 const DRV = 101, ADM = 900, RDR = 202;
 let updateId = 0;
@@ -84,6 +84,21 @@ assert.ok(lastTo(DRV).body.reply_markup.keyboard[0][0].request_location, 'duty a
 await loc(DRV, 27.498, 77.462);
 assert.equal(status('919111111111').on_duty, 1);
 step('admin taps Approve in their own chat; driver goes on duty with the location button');
+
+// ---------- /admin opens the dashboard inside Telegram as a mini-app ----------
+await text(ADM, '/admin');
+const adminMsg = lastTo(ADM).body;
+assert.equal(adminMsg.reply_markup.inline_keyboard[0][0].web_app.url, 'https://sawari.example/dashboard', 'a mini-app button for the admin');
+assert.equal(adminMsg.reply_markup.inline_keyboard[0][0].text, 'Open dashboard');
+const before = to(DRV).length;
+await text(DRV, '/admin');
+assert.ok(!to(DRV).slice(before).some((c) => JSON.stringify(c.body).includes('web_app')), 'a driver sending /admin gets no dashboard button');
+assert.ok(bot.isLinked(ADMIN, ADM), 'the admin\'s Telegram account is the one linked to ADMIN_PHONE');
+assert.ok(!bot.isLinked(ADMIN, DRV) && !bot.isLinked(ADMIN, 12345), 'other accounts are not');
+await bot.link(ADMIN, 'Admin dashboard', 'Open dashboard', 'http://localhost:3000/dashboard');
+const plainLink = lastTo(ADM).body;
+assert.ok(plainLink.text.includes('http://localhost:3000/dashboard') && !plainLink.reply_markup, 'Telegram only allows https mini-apps, so an http address goes out as plain text');
+step('/admin gives the admin an Open-dashboard mini-app button; others get none; http addresses fall back to text');
 
 // ---------- rider books, driver quotes, numbers revealed ----------
 await text(RDR, 'hi');

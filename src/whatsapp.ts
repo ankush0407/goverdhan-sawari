@@ -70,6 +70,8 @@ export interface Sender {
   image(to: string, mediaId: string, caption: string): Promise<void>;
   location(to: string, lat: number, lng: number, name: string): Promise<void>;
   requestLocation(to: string, body: string): Promise<void>;
+  /** A message with a button that opens a web page (Telegram: inside the app, as a mini-app). When absent, send the URL as text. */
+  link?(to: string, body: string, label: string, url: string): Promise<void>;
   /** Download an uploaded file by the id we stored (admin dashboard shows driver photos and RCs). Undefined if unavailable. */
   media?(id: string): Promise<{ contentType: string; data: Buffer } | undefined>;
 }
@@ -170,7 +172,8 @@ export type Out =
   | { to: string; t: 'list'; body: string; header?: string; rows: Row[] }
   | { to: string; t: 'image'; mediaId: string; caption: string }
   | { to: string; t: 'location'; lat: number; lng: number; name: string }
-  | { to: string; t: 'reqloc'; body: string };
+  | { to: string; t: 'reqloc'; body: string }
+  | { to: string; t: 'link'; body: string; label: string; url: string };
 
 export class MemorySender implements Sender {
   outbox: Out[] = [];
@@ -185,6 +188,7 @@ export class MemorySender implements Sender {
   async image(to: string, mediaId: string, caption: string) { this.push({ to, t: 'image', mediaId, caption }); }
   async location(to: string, lat: number, lng: number, name: string) { this.push({ to, t: 'location', lat, lng, name }); }
   async requestLocation(to: string, body: string) { this.push({ to, t: 'reqloc', body }); }
+  async link(to: string, body: string, label: string, url: string) { this.push({ to, t: 'link', body, label, url }); }
   to(phone: string) { return this.outbox.filter((o) => o.to === phone); }
   last(phone: string) { const a = this.to(phone); return a[a.length - 1]; }
   clear() { this.outbox = []; }

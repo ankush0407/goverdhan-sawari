@@ -1,11 +1,13 @@
 // Admin API test: in-memory DB, the real Engine, and a throwaway HTTP server. Run with `npm run sim:admin`.
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
 import { createAdminRouter, ist } from './admin.js';
 import { openDb } from './db.js';
 import { Engine, defaultConfig } from './flow.js';
+import { verifyInitData } from './tgauth.js';
 import { MemorySender, type Incoming } from './whatsapp.js';
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
@@ -83,6 +85,60 @@ assert.equal(locked.status, 429, 'after 3 wrong tokens even the right one is ref
 assert.ok(Number(locked.headers.get('retry-after')) > 0, 'told how long to wait');
 s3.close();
 step('admin brute-force lockout: 3 wrong tokens lock an address out; a right token resets the count');
+
+// ---------- Telegram mini-app sign-in ----------
+// A test copy of how Telegram signs launch data: HMAC-SHA256 over the sorted fields, keyed by HMAC("WebAppData", bot token).
+const BOT = '123456:TEST-BOT-TOKEN';
+const ADMIN_TG_ID = 42;
+const sign = (fields: Record<string, string>, botToken = BOT) => {
+  const check = Object.entries(fields).sort(([a], [b]) => (a < b ? -1 : 1)).map(([k, v]) => `${k}=${v}`).join('\n');
+  const hash = createHmac('sha256', createHmac('sha256', 'WebAppData').update(botToken).digest()).update(check).digest('hex');
+  return new URLSearchParams({ ...fields, hash });
+};
+const fields = (userId: number, ageSec = 0): Record<string, string> =>
+  ({ auth_date: String(Math.floor(Date.now() / 1000) - ageSec), query_id: 'AAH-test', user: JSON.stringify({ id: userId, first_name: 'Admin' }) });
+const launch = (userId = ADMIN_TG_ID, ageSec = 0, botToken = BOT) => sign(fields(userId, ageSec), botToken).toString();
+
+const tg = express();
+tg.use('/admin', createAdminRouter({ db, engine, sender: wa, token: 'tok', telegramAuth: { botToken: BOT, isAdmin: (id) => id === ADMIN_TG_ID }, maxFailures: 100 }));
+const s4 = tg.listen(0);
+const asTg = (header: string) => fetch(`http://127.0.0.1:${(s4.address() as AddressInfo).port}/admin/stats`, { headers: { authorization: header } });
+
+assert.equal((await asTg(`tma ${launch()}`)).status, 200, 'the admin\'s own Telegram launch data is accepted');
+assert.equal((await asTg('Bearer tok')).status, 200, 'the token still works alongside');
+assert.equal((await asTg(`tma ${launch(43)}`)).status, 401, 'a validly signed launch from a different Telegram account is refused');
+assert.equal((await asTg(`tma ${launch(ADMIN_TG_ID, 0, '999999:OTHER-BOT')}`)).status, 401, 'signed with another bot\'s key');
+const tampered = sign(fields(ADMIN_TG_ID)); // signed for the admin, then the user is swapped for someone else
+tampered.set('user', JSON.stringify({ id: 43, first_name: 'Intruder' }));
+assert.equal((await asTg(`tma ${tampered}`)).status, 401, 'a field changed after signing');
+const swapped = sign(fields(43)); // signed for someone else, then relabelled as the admin
+swapped.set('user', JSON.stringify({ id: ADMIN_TG_ID, first_name: 'Admin' }));
+assert.equal((await asTg(`tma ${swapped}`)).status, 401, 'claiming to be the admin on someone else\'s signature');
+assert.equal((await asTg(`tma ${launch(ADMIN_TG_ID, 2 * 24 * 3600)}`)).status, 401, 'launch data older than a day');
+assert.equal((await asTg(`tma ${launch(ADMIN_TG_ID, -3600)}`)).status, 401, 'launch data dated in the future');
+const noHash = new URLSearchParams(fields(ADMIN_TG_ID));
+assert.equal((await asTg(`tma ${noHash}`)).status, 401, 'no signature at all');
+const upper = sign(fields(ADMIN_TG_ID)); upper.set('hash', upper.get('hash')!.toUpperCase());
+assert.equal((await asTg(`tma ${upper}`)).status, 401, 'malformed signature');
+const noUser = sign({ auth_date: String(Math.floor(Date.now() / 1000)), query_id: 'AAH-test' });
+assert.equal((await asTg(`tma ${noUser}`)).status, 401, 'validly signed but carrying no user');
+assert.equal((await asTg('tma ')).status, 401, 'empty launch data');
+assert.equal((await fetch(`${base}/admin/stats`, { headers: { authorization: `tma ${launch()}` } })).status, 401, 'a server without Telegram sign-in ignores launch data');
+// direct checks of the verifier
+assert.equal(verifyInitData(launch(), BOT)?.id, ADMIN_TG_ID);
+assert.equal(verifyInitData(launch(ADMIN_TG_ID, 100), BOT, { maxAgeSec: 60 }), null, 'maxAgeSec is honoured');
+assert.equal(verifyInitData(launch(ADMIN_TG_ID, 100), BOT, { maxAgeSec: 200 })?.id, ADMIN_TG_ID);
+s4.close();
+// bad launch data counts toward the lockout like a wrong token
+const tgLock = express();
+tgLock.use('/admin', createAdminRouter({ db, engine, sender: wa, token: 'tok', telegramAuth: { botToken: BOT, isAdmin: (id) => id === ADMIN_TG_ID }, maxFailures: 2 }));
+const s5 = tgLock.listen(0);
+const lockHit = (header: string) => fetch(`http://127.0.0.1:${(s5.address() as AddressInfo).port}/admin/stats`, { headers: { authorization: header } });
+assert.equal((await lockHit(`tma ${launch(43)}`)).status, 401);
+assert.equal((await lockHit(`tma ${launch(43)}`)).status, 401);
+assert.equal((await lockHit(`tma ${launch()}`)).status, 429, 'repeated bad launch data locks the address out, even for the admin');
+s5.close();
+step('Telegram mini-app sign-in: the admin\'s account is accepted; other accounts, forged, tampered, expired and future-dated launch data are refused');
 
 // ---------- drivers ----------
 const all = await json('/admin/drivers?status=all');

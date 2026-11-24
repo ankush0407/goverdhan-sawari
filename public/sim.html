@@ -168,6 +168,9 @@ function bubble(p, m) {
       b.innerHTML = fmt(m.body);
       action('📍 Send location', '', () => sendLoc(p));
       break;
+    case 'link':
+      b.innerHTML = `${fmt(m.body)}\n<a href="${esc(m.url)}" target="_blank" rel="noopener">${esc(m.label)}</a>`;
+      break;
     default: b.textContent = JSON.stringify(m);
   }
   if (acts.childElementCount) b.append(acts);

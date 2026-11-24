@@ -14,6 +14,8 @@ export type Config = {
   locFreshHours: number;
   maxQuotes: number;
   adminPhone?: string;
+  /** Public https address of this server (e.g. https://sawari.up.railway.app), used for the admin "Open dashboard" button. */
+  publicUrl?: string;
 };
 
 export const defaultConfig: Config = {
@@ -150,12 +152,28 @@ export class Engine {
     const txt = (m.text ?? '').trim();
     const drv = this.getDriver(u.phone);
 
+    if (/^admin$/i.test(txt) && this.isAdmin(u.phone)) return this.openAdmin(u.phone);
     if (/^(cancel|रद्द|cancel ride)$/i.test(txt)) return this.onCancelText(u, drv);
 
     if (/^(driver|ड्राइवर|चालक)$/i.test(txt) && !(drv && drv.status !== 'draft')) return this.startDriver(u);
     if (u.state.startsWith('drv_')) return this.driverOnboarding(u, m, drv);
     if (drv && drv.status !== 'draft') return this.driverText(u, m, drv);
     return this.riderText(u, m);
+  }
+
+  // ================= ADMIN =================
+  /** Only the number in ADMIN_PHONE is the admin (Approve/Reject buttons, the /admin command). */
+  private isAdmin(phone: string) {
+    return Boolean(this.cfg.adminPhone) && phone === this.cfg.adminPhone!.replace(/\D/g, '');
+  }
+
+  /** "Open dashboard" button (a mini-app on Telegram); on a channel without one, the plain address. */
+  private async openAdmin(phone: string) {
+    const base = this.cfg.publicUrl?.replace(/\/+$/, '');
+    if (!base) return this.say(phone, 'admin_no_url');
+    const l = this.lang(phone), url = `${base}/dashboard`;
+    if (this.send.link) return this.send.link(phone, t(l, 'admin_open'), t(l, 'btn_admin_open'), url);
+    return this.send.text(phone, `${t(l, 'admin_open')}\n${url}`);
   }
 
   // ================= RIDER =================
@@ -684,7 +702,7 @@ export class Engine {
       }
       case 'adm': {
         // Only the configured admin may approve or reject, whatever the button says.
-        if (!this.cfg.adminPhone || u.phone !== this.cfg.adminPhone.replace(/\D/g, '')) return;
+        if (!this.isAdmin(u.phone)) return;
         const ok = a[0] === 'ok' ? await this.approveDriver(a[1]) : await this.rejectDriver(a[1]);
         const d = this.getDriver(a[1]);
         return this.send.text(u.phone, ok ? `${a[0] === 'ok' ? '✅ Approved' : '❌ Rejected'}: ${d?.name ?? plus(a[1])}` : `Nothing changed for ${plus(a[1])}.`);

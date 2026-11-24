@@ -47,6 +47,11 @@ export class TelegramBot implements Sender {
     return (this.db.prepare('SELECT phone FROM tg_links WHERE chat_id=?').get(chatId) as { phone: string } | undefined)?.phone;
   }
 
+  /** Is this Telegram account (in a private chat its id equals the chat id) the one linked to that phone number? */
+  isLinked(phone: string, telegramId: number) {
+    return this.chatOf(phone) === telegramId;
+  }
+
   /** Photo/RC bytes for the admin dashboard: getFile gives a path, then the file is fetched from Telegram's file host. */
   async media(id: string) {
     try {
@@ -98,6 +103,11 @@ export class TelegramBot implements Sender {
       parse_mode: 'HTML',
       reply_markup: { keyboard: [[{ text: '📍 Send my location / लोकेशन भेजें', request_location: true }]], resize_keyboard: true, one_time_keyboard: true },
     });
+  }
+  /** A button that opens the page inside Telegram as a mini-app. Telegram only allows https; otherwise the URL goes out as plain text. */
+  async link(to: string, body: string, label: string, url: string) {
+    if (!url.startsWith('https://')) return this.text(to, `${body}\n${url}`);
+    await this.send(to, 'sendMessage', { text: html(body), parse_mode: 'HTML', reply_markup: { inline_keyboard: [[{ text: label, web_app: { url } }]] } });
   }
 
   // ---------- receiving ----------
@@ -157,7 +167,7 @@ export class TelegramBot implements Sender {
     if (edited && !msg.location) return; // only Live Location updates matter among edits
     const chatId: number = msg.chat.id;
 
-    if (msg.contact) return this.link(msg, id);
+    if (msg.contact) return this.linkContact(msg, id);
 
     const base = { id, name: msg.from?.first_name as string | undefined };
     let m: Pending;
@@ -183,7 +193,7 @@ export class TelegramBot implements Sender {
     });
   }
 
-  private async link(msg: any, id: string): Promise<Incoming | undefined> {
+  private async linkContact(msg: any, id: string): Promise<Incoming | undefined> {
     const chatId: number = msg.chat.id;
     if (msg.contact.user_id !== msg.from?.id) {
       await this.call('sendMessage', { chat_id: chatId, text: 'Please share your own number with the button below. / कृपया नीचे के बटन से अपना ही नंबर भेजें।' });

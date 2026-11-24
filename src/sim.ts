@@ -8,7 +8,7 @@ let clock = 1_700_000_000_000;
 const db = openDb(':memory:');
 const wa = new MemorySender();
 const ADMIN = '919000000000';
-const engine = new Engine(db, wa, { ...defaultConfig, adminPhone: ADMIN }, () => clock);
+const engine = new Engine(db, wa, { ...defaultConfig, adminPhone: ADMIN, publicUrl: 'https://sawari.example' }, () => clock);
 
 const D1 = '919111111111', D2 = '919222222222';
 const R1 = '919333333333', R2 = '919444444444', R3 = '919555555555';
@@ -101,6 +101,28 @@ assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', D
 assert.ok(texts(ADMIN).some((b) => b.includes('Approved: Mohan Lal')), 'admin told approval went through');
 assert.equal(last(D3).t, 'buttons', 'driver gets approval + duty menu');
 step('admin approves a driver with the button in their own chat; others cannot');
+
+// The admin's "admin" / "/admin" command answers with a dashboard button; nobody else gets one.
+await say(ADMIN, 'admin');
+const dash = last(ADMIN) as Extract<Out, { t: 'link' }>;
+assert.equal(dash.t, 'link', 'the admin gets a button that opens the dashboard');
+assert.equal(dash.url, 'https://sawari.example/dashboard');
+assert.equal(dash.label, 'Open dashboard');
+const R9 = '919777000009';
+await say(R9, 'admin');
+await say(D3, 'Admin');
+assert.ok(![...wa.to(R9), ...wa.to(D3)].some((o) => o.t === 'link' || JSON.stringify(o).includes('dashboard')), 'a rider or driver typing "admin" gets no dashboard');
+// On a channel without link buttons (WhatsApp) the address goes out as text; a trailing slash is not doubled; no address → a hint.
+class NoLink extends MemorySender {}
+(NoLink.prototype as any).link = undefined;
+const plain = new NoLink();
+const plainEngine = new Engine(openDb(':memory:'), plain, { ...defaultConfig, adminPhone: ADMIN, publicUrl: 'https://sawari.example/' }, () => clock);
+await plainEngine.handle({ id: 'p1', from: ADMIN, kind: 'text', text: 'admin' });
+assert.ok((plain.last(ADMIN) as any).body.endsWith('\nhttps://sawari.example/dashboard'), 'plain-text address, single slash');
+const noUrl = new MemorySender();
+await new Engine(openDb(':memory:'), noUrl, { ...defaultConfig, adminPhone: ADMIN }, () => clock).handle({ id: 'p2', from: ADMIN, kind: 'text', text: 'admin' });
+assert.ok((noUrl.last(ADMIN) as any).body.includes('PUBLIC_URL'), 'told to set PUBLIC_URL when there is no address');
+step('"admin" gives the admin an Open-dashboard button (plain address on other channels); nobody else gets one');
 
 const D6 = '919101010101'; // opened the driver link but actually wants a ride
 await say(D6, 'DRIVER');

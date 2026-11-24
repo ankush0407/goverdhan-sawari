@@ -10,6 +10,105 @@ function name given next to each range.
 
 ---
 
+## 2026-11-24 — Open the admin dashboard inside Telegram (`/admin` mini-app, signed-in automatically)
+
+Commit `<HASH>` (on top of `4a0adee`). Line numbers below are for that commit.
+Tests: `npm run typecheck`, `npm run sim` (new "admin" check), `npm run sim:tg` (new `/admin` check) and `npm run sim:admin`
+(new mini-app sign-in check) all pass. The signature check was also removed on purpose once to confirm the tests catch it
+(an account signed with another bot's key got in, and the test failed), then restored. The page was exercised in a browser
+against a throwaway server with signed launch data: the admin's account loaded the data with no password; a validly
+signed launch from a different account was refused with a message and the token form, and the token still worked after.
+
+**Not tested:** inside the real Telegram app. The launch-data format and the signature algorithm follow Telegram's
+documentation, but the first real `/admin` tap is the proof. If the button opens a sign-in form instead of data, send the
+message shown on that page.
+
+### What the admin experiences
+
+Send `/admin` (or `admin`) to the bot from the account linked to `ADMIN_PHONE`: the bot replies "🛠 Admin dashboard" with an
+**Open dashboard** button. It opens the dashboard inside Telegram, already signed in. Nobody else gets a button. The
+`ADMIN_TOKEN` password still works in a normal browser.
+
+### How it is secured
+
+Telegram opens the page with launch data signed by Telegram using a key derived from the bot token. The server recomputes
+the signature, rejects data older than 24 hours or dated in the future, and then requires the Telegram account to be the one
+linked to `ADMIN_PHONE`. Anyone without the bot token cannot produce a valid signature. Bad launch data counts toward the
+existing lockout (10 failures per address per 15 minutes) like a wrong password.
+
+### `src/tgauth.ts` (new, 34 lines)
+
+| Lines | What |
+|---|---|
+| 13–34 | `verifyInitData(initData, botToken, { maxAgeSec, now })`: signature check (23, constant-time), freshness (25–26), and the user id from the signed `user` field. Returns `null` for anything wrong. |
+
+### `src/admin.ts`
+
+| Lines | Change |
+|---|---|
+| 7, 13 | Imports the verifier; `Deps` gains optional `telegramAuth: { botToken, isAdmin }`. |
+| 28, 31–39 | `authorized(header)` accepts `Bearer <ADMIN_TOKEN>` as before, or `tma <launch data>` that verifies **and** whose Telegram id passes `isAdmin`. |
+| 51 | The lockout middleware now calls `authorized`, so bad launch data is counted. |
+
+### `src/flow.ts`
+
+| Lines | Change |
+|---|---|
+| 18 | `Config.publicUrl` (optional): the server's public https address. |
+| 155 | In `onText`: the text `admin` from the admin number calls `openAdmin`. Anyone else's `admin` is handled as ordinary text. |
+| 164–177 | `isAdmin(phone)` (one rule for the Approve buttons and this command) and `openAdmin()`: a link button when the channel supports one (`Sender.link`), else the address as text; a hint to set `PUBLIC_URL` when there is none. |
+| 705 | The Approve/Reject case uses `isAdmin` (same behaviour as before). |
+
+### `src/telegram.ts`, `src/whatsapp.ts`, `src/messages.ts`
+
+| File and lines | Change |
+|---|---|
+| `src/telegram.ts` 51 | `isLinked(phone, telegramId)`: is this Telegram account the one linked to that number. |
+| `src/telegram.ts` 108 | `link()`: a mini-app (`web_app`) button for https addresses; Telegram rejects other addresses, so an http one goes out as plain text. |
+| `src/telegram.ts` 170, 196 | The existing contact-linking method was renamed `linkContact` to free the name. No behaviour change. |
+| `src/whatsapp.ts` 74, 176, 191 | `Sender.link?()` (optional), the `link` message type for tests, and `MemorySender.link`. |
+| `src/messages.ts` 103–105, 250–252 | `admin_open`, `btn_admin_open`, `admin_no_url`. Hindi carries the same English text: this is an operator tool. |
+
+### `src/server.ts`
+
+| Lines | Change |
+|---|---|
+| 25 | `publicUrl` from `PUBLIC_URL`, else `https://$RAILWAY_PUBLIC_DOMAIN` (Railway provides it once a domain exists). |
+| 75–81 | Passes `telegramAuth` to the admin router when running on Telegram with `TELEGRAM_BOT_TOKEN` and `ADMIN_PHONE` set. `isAdmin` asks `telegram.isLinked`. |
+| 122 | Warns at startup if `ADMIN_PHONE` is set but there is no public address. |
+
+### `public/admin.html`
+
+| Lines | Change |
+|---|---|
+| 150–159 | Reads the signed launch data from the page address (`tgWebAppData`), keeps it for the session, and `credential()` sends `tma <data>` instead of a password when it is present. |
+| 165, 175, 421 | Requests and the first load use `credential()`. |
+| 186 | If the server refuses the launch data (not the admin, or expired) the token form appears with an explanation; the password then works. |
+| 207 | "Sign out" is hidden while Telegram is the sign-in. |
+
+`public/sim.html` line 171 shows the new `link` message in the dev simulator.
+
+### Tests
+
+| File and lines | What |
+|---|---|
+| `src/admin-sim.ts` 89–141 | A test copy of Telegram's signing; accepts the admin's account; refuses another account, another bot's key, a changed field, a swapped user, launch data over a day old or dated in the future, no signature, a malformed signature, no user, and empty data; a server without Telegram sign-in ignores it; direct `verifyInitData` and `maxAgeSec` checks; bad launch data triggers the lockout. |
+| `src/sim.ts` 105–125 | The admin gets a link button with the right address; a rider and a driver typing `admin` get nothing; a channel without link buttons gets the plain address (trailing slash not doubled); no address gives a `PUBLIC_URL` hint. |
+| `src/telegram-sim.ts` 88–101 | `/admin` produces a `web_app` button for the admin only; `isLinked` is true only for the admin's account; an http address falls back to text. |
+
+### Docs and configuration
+
+`README.md` lines 69 (variable table), 89 (how to open it inside Telegram); `.env.example` lines 8–10 (`PUBLIC_URL`).
+On Railway, `PUBLIC_URL` was also set explicitly to the service's domain.
+
+### Known gaps
+
+- Not yet tried in the real Telegram app (see above).
+- Launch data stays valid for 24 hours, so a copy of it that leaked from the admin's phone would work until then.
+- The chat menu button is not set, so the dashboard is reached by typing `/admin`.
+
+---
+
 ## 2026-11-17 — Prepare for Railway: host mode, admin lockout, deploy config
 
 Commit `d93a471` (on top of `12fc312`). Line numbers below are for that commit.

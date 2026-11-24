@@ -145,12 +145,24 @@ const stars = (n) => n == null ? '' : '★'.repeat(n) + '☆'.repeat(Math.max(0,
 
 // ---------- state ----------
 let token = store.get('sawari.admin.token', '');
+// Opened from the bot's /admin button inside Telegram: Telegram puts signed launch data in the URL hash. Keep it for this
+// session and send it instead of a password; the server checks the signature and that the account is the admin's.
+const launchData = (() => {
+  try {
+    const fromHash = new URLSearchParams(location.hash.slice(1)).get('tgWebAppData');
+    if (fromHash) { sessionStorage.setItem('sawari.tma', fromHash); return fromHash; }
+    return sessionStorage.getItem('sawari.tma') || '';
+  } catch { return ''; }
+})();
+let tmaRejected = false;                        // the server refused it (not the admin, or too old): fall back to the token form
+const viaTelegram = () => Boolean(launchData) && !tmaRejected;
+const credential = () => (viaTelegram() ? 'tma ' + launchData : token ? 'Bearer ' + token : '');
 let tab = store.get('sawari.admin.tab', 'overview');
 const S = { stats: null, drivers: [], riders: [], rides: [], details: {}, open: new Set(), q: '', driverFilter: 'all', rideFilter: 'all', busy: new Set(), updated: null };
 const imgCache = new Map();                 // "photo:+91…:<media id>" → object URL, or 'none'
 
 async function api(path, opts = {}) {
-  const r = await fetch('/admin' + path, { ...opts, headers: { authorization: 'Bearer ' + token } });
+  const r = await fetch('/admin' + path, { ...opts, headers: { authorization: credential() } });
   if (r.status === 401) throw Object.assign(new Error('unauthorized'), { auth: true });
   if (!r.ok) throw new Error(`${path} → ${r.status}`);
   return r;
@@ -160,7 +172,7 @@ const getJSON = async (p) => (await api(p)).json();
 // ---------- data ----------
 let loading = false;
 async function refresh() {
-  if (!token || loading) return;
+  if (!credential() || loading) return;
   loading = true;
   try {
     const [stats, drivers, riders, rides] = await Promise.all([getJSON('/stats'), getJSON('/drivers?status=all'), getJSON('/riders'), getJSON('/rides?limit=300')]);
@@ -171,7 +183,8 @@ async function refresh() {
     renderBadges();
     renderList();
   } catch (e) {
-    if (e.auth) { signOut('That token was not accepted. It is ADMIN_TOKEN from the server\'s .env file.'); }
+    if (e.auth && viaTelegram()) { tmaRejected = true; showLogin('Telegram did not sign you in: this account is not the admin, or the link has expired. Reopen it with /admin, or enter the admin token.'); }
+    else if (e.auth) { signOut('That token was not accepted. It is ADMIN_TOKEN from the server\'s .env file.'); }
     else $('#updated').textContent = 'Could not reach the server — retrying…';
   } finally { loading = false; }
 }
@@ -190,7 +203,8 @@ function signOut(msg) { token = ''; store.del('sawari.admin.token'); showLogin(m
 
 let shell = false;
 function showApp() {
-  $('#refresh').hidden = $('#logout').hidden = $('#tabs').hidden = false;
+  $('#refresh').hidden = $('#tabs').hidden = false;
+  $('#logout').hidden = viaTelegram();           // nothing to sign out of when Telegram is the sign-in
   if (!shell) { shell = true; renderTab(); }
 }
 
@@ -404,7 +418,7 @@ $('#refresh').onclick = refresh;
 $('#logout').onclick = () => signOut('');
 setInterval(() => { if (!document.hidden) refresh(); }, 10000);
 
-if (token) { $('#app').innerHTML = '<p class="empty">Loading…</p>'; refresh(); } else showLogin('');
+if (credential()) { $('#app').innerHTML = '<p class="empty">Loading…</p>'; refresh(); } else showLogin('');
 </script>
 </body>
 </html>

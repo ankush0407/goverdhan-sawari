@@ -4,10 +4,13 @@ import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import type { DB } from './db.js';
 import type { Engine } from './flow.js';
+import { verifyInitData } from './tgauth.js';
 import type { Sender } from './whatsapp.js';
 
 type Deps = {
   db: DB; engine: Engine; sender: Sender; token: string | undefined;
+  /** Lets the dashboard sign in from a Telegram mini-app: valid launch data from the admin's own Telegram account. */
+  telegramAuth?: { botToken: string; isAdmin: (telegramId: number) => boolean };
   /** Wrong tokens allowed per address within the window before it is locked out (the correct token is refused too). */
   maxFailures?: number; windowMs?: number;
 };
@@ -22,8 +25,18 @@ const safeEq = (a: string, b: string) => {
 };
 const parseJson = (s: string | null) => { try { return s ? JSON.parse(s) : null; } catch { return null; } };
 
-export function createAdminRouter({ db, engine, sender, token, maxFailures = 10, windowMs = 15 * 60_000 }: Deps) {
+export function createAdminRouter({ db, engine, sender, token, telegramAuth, maxFailures = 10, windowMs = 15 * 60_000 }: Deps) {
   const admin = express.Router();
+
+  /** `Authorization: Bearer <ADMIN_TOKEN>`, or `tma <Telegram launch data>` from the admin's own Telegram account. */
+  const authorized = (header: string) => {
+    if (token && safeEq(header, `Bearer ${token}`)) return true;
+    if (telegramAuth && header.startsWith('tma ')) {
+      const user = verifyInitData(header.slice(4), telegramAuth.botToken);
+      return user != null && telegramAuth.isAdmin(user.id);
+    }
+    return false;
+  };
 
   // On a public host anyone can try tokens, so repeated wrong ones lock that address out for a while.
   const failures = new Map<string, number[]>(); // address → times of recent wrong tokens
@@ -35,7 +48,7 @@ export function createAdminRouter({ db, engine, sender, token, maxFailures = 10,
       failures.set(ip, recent);
       return res.set('Retry-After', String(Math.ceil(windowMs / 1000))).sendStatus(429);
     }
-    if (!token || !safeEq(req.header('authorization') ?? '', `Bearer ${token}`)) {
+    if (!authorized(req.header('authorization') ?? '')) {
       failures.set(ip, [...recent, now]);
       return res.sendStatus(401);
     }

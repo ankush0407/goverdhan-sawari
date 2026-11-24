@@ -99,6 +99,10 @@ const en = {
   drv_on: '✅ You are ON duty. New rides will appear here.',
   drv_off: '⏸ You are OFF duty.',
   drv_stats: 'Rides done: {rides}\nRating: {rating}',
+  // Admin-only: the operator reads English, so Hindi carries the same text.
+  admin_open: '🛠 Admin dashboard',
+  btn_admin_open: 'Open dashboard',
+  admin_no_url: 'The dashboard address is not set. Add PUBLIC_URL to the server settings.',
 
   // ---- driver ride flow ----
   offer_quote: '🆕 New ride\n📍 Pickup {dist} km from you\n➡️ {drop}\n👥 {group} people · {when}\n\nChoose your price:',
@@ -243,6 +247,9 @@ const hi: Record<keyof typeof en, string> = {
   drv_on: '✅ आप ड्यूटी पर हैं। नई सवारियाँ यहीं दिखेंगी।',
   drv_off: '⏸ आप ड्यूटी से बाहर हैं।',
   drv_stats: 'पूरी सवारियाँ: {rides}\nरेटिंग: {rating}',
+  admin_open: '🛠 Admin dashboard',
+  btn_admin_open: 'Open dashboard',
+  admin_no_url: 'The dashboard address is not set. Add PUBLIC_URL to the server settings.',
 
   offer_quote: '🆕 नई सवारी\n📍 पिकअप आपसे {dist} किमी दूर\n➡️ {drop}\n👥 {group} लोग · {when}\n\nअपना भाव चुनें:',
   offer_quote_btn: 'भाव चुनें',
