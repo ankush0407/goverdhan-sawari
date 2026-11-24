@@ -59,6 +59,7 @@ const PRICE_OPTIONS = [100, 150, 200, 300, 400, 500, 700, 1000];
 const TAGS = ['polite', 'ontime', 'fair', 'overcharged', 'unsafe', 'none'] as const;
 const GREETING = /^(hi|hello|hey|hii|start|menu|namaste|नमस्ते|नमस्कार|हेलो)$/i;
 const WANTS_RIDE = /^(ride|book|book a ride|taxi|sawari|सवारी)$/i;
+const RESTART = /^(restart|start over|start again|reset|दोबारा|फिर से|दोबारा शुरू)$/i;
 
 export function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
   const R = 6371, rad = Math.PI / 180;
@@ -148,7 +149,9 @@ export class Engine {
     if (/^admin$/i.test(txt) && this.isAdmin(u.phone)) return this.openAdmin(u.phone);
     if (/^(cancel|रद्द|cancel ride)$/i.test(txt)) return this.onCancelText(u, drv);
 
-    if (/^(driver|ड्राइवर|चालक)$/i.test(txt) && !(drv && drv.status !== 'draft')) return this.startDriver(u);
+    // A driver who gave wrong details can start the form again (an approved one is asked to confirm first).
+    if (drv && (RESTART.test(txt) || (/^(driver|ड्राइवर|चालक)$/i.test(txt) && drv.status !== 'approved'))) return this.onRestart(u, drv);
+    if (/^(driver|ड्राइवर|चालक)$/i.test(txt) && !drv) return this.startDriver(u);
     if (u.state.startsWith('drv_')) return this.driverOnboarding(u, m, drv);
     if (drv && drv.status !== 'draft') return this.driverText(u, m, drv);
     return this.riderText(u, m);
@@ -488,9 +491,37 @@ export class Engine {
     if (this.inDetailsStep(u.state)) return this.takeDetails(u, parseDriverDetails(txt));
     switch (u.state) {
       case 'drv_lang': return this.promptLang(u.phone);
-      case 'drv_photo': return this.say(u.phone, 'drv_need_photo');
-      case 'drv_rc': return this.askRc(u.phone); // e.g. "nahi hai" — re-offer the skip button
+      case 'drv_photo': case 'drv_rc': {
+        // Details sent again here are a correction: a vehicle number, a seat count, or two or more fields. Anything else is not a photo.
+        const got = parseDriverDetails(txt);
+        const corrected = got.plate || got.seats || [got.name, got.plate, got.seats].filter((x) => x != null).length >= 2;
+        if (corrected) {
+          this.applyDetails(u.phone, got);
+          return u.state === 'drv_rc' ? this.askRc(u.phone, this.detailsText(u.phone)) : this.send.text(u.phone, `${this.detailsText(u.phone)}\n\n${this.tx(u.phone, 'drv_ask_photo')}`);
+        }
+        return u.state === 'drv_rc' ? this.askRc(u.phone) : this.say(u.phone, 'drv_need_photo'); // e.g. "nahi hai": re-offer the skip button
+      }
     }
+  }
+
+  /** "restart": start the form again. A driver already approved is asked first, and not while a ride is under way. */
+  private async onRestart(u: User, drv: Driver) {
+    if (this.driverRide(u.phone)) return this.say(u.phone, 'drv_restart_busy');
+    if (drv.status === 'approved') {
+      const l = this.lang(u.phone);
+      return this.send.buttons(u.phone, t(l, 'drv_restart_confirm'), [
+        { id: 'restart:yes', title: t(l, 'btn_restart_yes') }, { id: 'restart:no', title: t(l, 'btn_restart_no') },
+      ]);
+    }
+    return this.restartDriver(u);
+  }
+
+  /** Wipe what the driver entered and ask for it again. Rides and ratings already earned are kept; approval is not. */
+  private async restartDriver(u: User) {
+    this.db.prepare("UPDATE drivers SET name=NULL, vehicle_no=NULL, seats=NULL, photo_media_id=NULL, rc_media_id=NULL, status='draft', on_duty=0 WHERE phone=?").run(u.phone);
+    if (!u.lang) { this.setState(u.phone, 'drv_lang', {}, true); return this.promptLang(u.phone); }
+    this.setState(u.phone, 'drv_details', {}, true);
+    return this.say(u.phone, 'drv_welcome');
   }
 
   /**
@@ -503,16 +534,26 @@ export class Engine {
 
   /** Save whatever the message gave us, then ask only for what is still missing. */
   private async takeDetails(u: User, got: DriverDetails) {
-    const d = this.getDriver(u.phone)!;
+    this.applyDetails(u.phone, got);
+    return this.nextDetailsStep(u.phone);
+  }
+
+  private applyDetails(phone: string, got: DriverDetails) {
+    const d = this.getDriver(phone)!;
     const found = [got.name, got.plate, got.seats].filter((x) => x != null).length;
     // A lone word like "nahi hai" must not replace a name we already have; a message with two or more fields is a deliberate re-send.
-    if (got.name && (!d.name || found >= 2)) this.db.prepare('UPDATE drivers SET name=? WHERE phone=?').run(got.name, u.phone);
+    if (got.name && (!d.name || found >= 2)) this.db.prepare('UPDATE drivers SET name=? WHERE phone=?').run(got.name, phone);
     if (got.plate) {
-      this.db.prepare('UPDATE drivers SET vehicle_no=? WHERE phone=?').run(got.plate, u.phone);
-      this.setState(u.phone, 'drv_details', { noPlate: false });
+      this.db.prepare('UPDATE drivers SET vehicle_no=? WHERE phone=?').run(got.plate, phone);
+      this.setState(phone, this.getUser(phone).state, { noPlate: false });
     }
-    if (got.seats) this.db.prepare('UPDATE drivers SET seats=? WHERE phone=?').run(got.seats, u.phone);
-    return this.nextDetailsStep(u.phone);
+    if (got.seats) this.db.prepare('UPDATE drivers SET seats=? WHERE phone=?').run(got.seats, phone);
+  }
+
+  /** What we understood, shown back so a wrong name, plate or seat count is caught straight away. */
+  private detailsText(phone: string) {
+    const d = this.getDriver(phone)!, l = this.lang(phone);
+    return t(l, 'drv_got', { name: d.name ?? '—', plate: d.vehicle_no ?? t(l, 'no_plate'), seats: d.seats ?? '—' });
   }
 
   /** The next question: the photo once name, vehicle and seats are in, otherwise just the missing ones. */
@@ -520,12 +561,12 @@ export class Engine {
     this.setState(phone, 'drv_details');
     const d = this.getDriver(phone)!;
     const needName = !d.name, needPlate = !d.vehicle_no && !this.ctx(this.getUser(phone)).noPlate, needSeats = !d.seats;
-    if (!needName && !needPlate && !needSeats) {
-      if (d.photo_media_id) { this.setState(phone, 'drv_rc'); return this.askRc(phone); } // the photo came with the details
-      this.setState(phone, 'drv_photo');
-      return this.say(phone, 'drv_ask_photo');
-    }
     const l = this.lang(phone);
+    if (!needName && !needPlate && !needSeats) {
+      if (d.photo_media_id) { this.setState(phone, 'drv_rc'); return this.askRc(phone, this.detailsText(phone)); } // the photo came with the details
+      this.setState(phone, 'drv_photo');
+      return this.send.text(phone, `${this.detailsText(phone)}\n\n${t(l, 'drv_ask_photo')}`);
+    }
     const items = [needName && t(l, 'drv_need_name'), needPlate && t(l, 'drv_need_plate'), needSeats && t(l, 'drv_need_seats')].filter(Boolean).join('\n');
     const body = t(l, 'drv_missing', { items });
     if (needPlate) return this.send.buttons(phone, body, [{ id: 'noplate', title: t(l, 'btn_no_plate') }]);
@@ -558,9 +599,9 @@ export class Engine {
     this.db.prepare("DELETE FROM drivers WHERE phone=? AND status='draft'").run(phone);
   }
 
-  private askRc(phone: string) {
+  private askRc(phone: string, intro = '') {
     const l = this.lang(phone);
-    return this.send.buttons(phone, t(l, 'drv_ask_rc'), [{ id: 'rclater', title: t(l, 'btn_rc_later') }]);
+    return this.send.buttons(phone, intro ? `${intro}\n\n${t(l, 'drv_ask_rc')}` : t(l, 'drv_ask_rc'), [{ id: 'rclater', title: t(l, 'btn_rc_later') }]);
   }
 
   /** End of onboarding; rcMediaId is null when the driver will send the RC later. */
@@ -714,11 +755,19 @@ export class Engine {
         this.db.prepare('UPDATE drivers SET seats=? WHERE phone=?').run(Number(a[0]), u.phone);
         return this.nextDetailsStep(u.phone);
       }
+      case 'restart': {
+        const me = this.getDriver(u.phone);
+        if (!me || me.status !== 'approved') return; // an old button
+        if (a[0] !== 'yes') return this.say(u.phone, 'drv_restart_kept');
+        if (this.driverRide(u.phone)) return this.say(u.phone, 'drv_restart_busy');
+        return this.restartDriver(u);
+      }
       case 'adm': {
         // Only the configured admin may approve or reject, whatever the button says.
         if (!this.isAdmin(u.phone)) return;
         const ok = a[0] === 'ok' ? await this.approveDriver(a[1]) : await this.rejectDriver(a[1]);
         const d = this.getDriver(a[1]);
+        if (!ok && d?.status === 'draft') return this.say(u.phone, 'admin_reregistering', { who: d.name ?? plus(d.phone) });
         return this.send.text(u.phone, ok ? `${a[0] === 'ok' ? '✅ Approved' : '❌ Rejected'}: ${d?.name ?? plus(a[1])}` : `Nothing changed for ${plus(a[1])}.`);
       }
       case 'noplate': {

@@ -10,6 +10,82 @@ function name given next to each range.
 
 ---
 
+## 2026-11-24 — Drivers can fix wrong details and restart registration
+
+Commit `<HASH>` (on top of `9d14398`). Line numbers below are for that commit.
+Tests: `npm run typecheck`, `npm run sim` (new "wrong details" checks), `npm run sim:tg` and `npm run sim:admin` all pass. Four
+behaviours were broken on purpose to confirm the tests catch them: an approved driver restarting without confirming,
+restarting during a ride, a restarted driver silently staying approvable, and a lone word counting as a correction. The last
+one was **not** caught at first (the assertion was too loose), so it was tightened and re-checked.
+
+### Why
+
+Once a driver had submitted, there was no way back. Typing `driver` again or anything else only produced "still under
+review" (or "could not approve"), and at the photo and RC steps re-sent details were refused with "Please send it as a
+photo". The bot also never showed what it had understood, so a wrongly read name or plate went unnoticed.
+
+### What a driver experiences
+
+- **The bot shows back what it understood** (name, vehicle, seats) in the message that asks for the photo (or the RC), with
+  "Something wrong? Send the details again, or type "restart"".
+- **Quick corrections at the photo and RC steps:** a message with a vehicle number, a seat count, or two or more fields is
+  taken as a correction; the bot shows the updated details and asks again for the photo or RC. A lone word is not a correction
+  (it still gets "Please send it as a photo").
+- **`restart`** (also `start over`, `reset`, `दोबारा`, `/restart`) wipes the name, vehicle, seats, photo and RC and shows the
+  one-message form again. **`driver`** does the same for anyone who is waiting, rejected or part-way through.
+- **Waiting for approval:** the "submitted" and "still under review" messages now say how to restart.
+- **Rejected:** the rejection message says how to register again.
+- **Approved:** `driver` just shows their menu. `restart` asks "Yes, restart / No, keep it" first, because it takes them off
+  duty and needs the admin to approve again. Rides done and ratings earned are kept. It is refused while a ride is matched,
+  arrived or started, and a stale button from earlier is ignored.
+- **The admin:** an Approve button on an old request for a driver who has since restarted does nothing and says the driver is
+  registering again; a new request arrives when they finish.
+
+### `src/flow.ts` (now 942 lines)
+
+| Lines | Change |
+|---|---|
+| 62 | `RESTART` pattern. |
+| 152–154 | `onText`: `restart`, or `driver` from anyone not approved, goes to `onRestart`; `driver` from someone with no driver record starts sign-up as before. |
+| 487–505 | `driverOnboarding`: at `drv_photo` / `drv_rc` (494–503) details sent again are applied as a correction and echoed; anything else keeps the old reply. |
+| 508–517 | `onRestart`: refuses during a ride; asks an approved driver to confirm; otherwise restarts. |
+| 520–525 | `restartDriver`: clears the registration fields, sets the status back to `draft` and takes the driver off duty; keeps rides and ratings; asks for the language if there is none yet. |
+| 536–551 | `takeDetails` now saves via the new `applyDetails` (same rules as before) and then asks the next question. |
+| 554–557 | `detailsText`: the "what I understood" message. |
+| 560–575 | `nextDetailsStep` includes it with the photo or RC request. |
+| 602–605 | `askRc(phone, intro)` can carry the echo. |
+| 758–764 | The `restart:yes` / `restart:no` buttons for an approved driver. |
+| 770 | Approve/Reject on a driver who is now a draft answers "registering again" instead of "nothing changed". |
+
+### `src/messages.ts` — English lines 85–92, 95–101; Hindi lines 241–248, 251–257
+
+New: `drv_got`, `drv_restart_confirm`, `btn_restart_yes`, `btn_restart_no`, `drv_restart_kept`, `drv_restart_busy`,
+`admin_reregistering`. Changed: `drv_ask_photo` (now only the photo request), `drv_pending`, `drv_pending_no_rc`,
+`drv_rejected`, `drv_not_approved` (each mentions "restart"). **The new Hindi is machine-drafted: have a native speaker
+check it.** `admin_reregistering` is English in both languages (an operator message).
+
+### `src/sim.ts` lines 228–313 (now 448 lines)
+
+The details are echoed back with the way to fix them; a corrected plate, a corrected name and seats, and a corrected seat count
+at the RC step are applied while a lone word is not (and gets the plain photo reply); "restart" while waiting clears the form,
+and the admin's old Approve button does not approve and says why; the corrected form creates a new request and can be approved;
+`driver` restarts a waiting driver and a rejected one (whose rejection message says how); restart works part-way through
+sign-up; an approved driver is asked to confirm, can say no, is refused during a ride, is taken off duty and needs approval
+again after yes while keeping rides and ratings, and a stale button does nothing; someone who is not a driver typing "restart"
+does not become one.
+
+### README: line 9 (driver flow).
+
+### Known gaps
+
+- A lone name correction at the photo/RC step is not accepted (to avoid a stray word replacing the name); use `restart` or
+  send two or more fields.
+- Restart wipes everything the driver entered, including the photo and RC; there is no "change only the plate" for a driver
+  who is already waiting for approval.
+- The Hindi copy is machine-drafted and unreviewed.
+
+---
+
 ## 2026-11-24 — Driver registration in one message; no "Book a ride" button for drivers
 
 Commit `e7749a8` (on top of `adf46da`). Line numbers below are for that commit.

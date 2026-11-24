@@ -225,6 +225,93 @@ for (const [text, want] of [
 ] as const) assert.deepEqual(parseDriverDetails(text), want, `parse "${text}"`);
 step('driver form in ONE message: any order, labels, Hindi, photo caption, only the missing parts re-asked, old mid-signup drivers carry on');
 
+// ---------------------------------------------------------------- A2. wrong details: correct them, or restart
+const status = (ph: string) => q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', ph).status;
+const field = (ph: string) => q<any>('SELECT name, vehicle_no, seats, photo_media_id, rc_media_id, on_duty, rides_done, rating_count FROM drivers WHERE phone=?', ph);
+const stateOf = (ph: string) => q<{ state: string }>('SELECT state FROM users WHERE phone=?', ph).state;
+const E1 = '919400000001';
+await say(E1, 'driver'); await pick(E1, 'lang:en'); await say(E1, 'Ramesh Kumar, UP85 AB 1234, 4');
+const echo = (last(E1) as any).body as string;
+assert.ok(echo.includes('Name: Ramesh Kumar') && echo.includes('Vehicle: UP85 AB 1234') && echo.includes('Seats: 4') && echo.includes('"restart"'), 'what was understood is shown back, with the way to fix it');
+// at the photo step: a corrected vehicle number or seat count is applied; a lone word is not
+await say(E1, 'UP85 CD 5678');
+assert.equal(field(E1).vehicle_no, 'UP85 CD 5678');
+assert.equal(stateOf(E1), 'drv_photo', 'still waiting for the photo');
+assert.ok((last(E1) as any).body.includes('Vehicle: UP85 CD 5678') && (last(E1) as any).body.includes('photo'), 'shows the corrected details and asks for the photo again');
+await say(E1, 'Ramesh');
+assert.equal(field(E1).name, 'Ramesh Kumar', 'a lone word is not a correction');
+assert.equal((last(E1) as any).body, 'Please send it as a photo.', 'and gets the plain "send a photo" reply, not a details echo');
+await say(E1, 'Ramesh K Sharma, 5'); // two fields: a deliberate correction of the name and the seats
+assert.deepEqual([field(E1).name, field(E1).seats], ['Ramesh K Sharma', 5]);
+await img(E1, 'e1-photo');
+await say(E1, '6'); // at the RC step
+assert.equal(field(E1).seats, 6);
+assert.equal(stateOf(E1), 'drv_rc');
+assert.ok((last(E1) as any).body.includes('Seats: 6') && (last(E1) as any).buttons.some((b: { id: string }) => b.id === 'rclater'), 'corrected, and the RC is asked for again');
+await img(E1, 'e1-rc');
+assert.equal(status(E1), 'pending');
+assert.ok(texts(E1).at(-1)!.includes('"restart"'), 'the "submitted" message says how to start over');
+
+// restart while waiting for approval: the form starts again, the old Approve button no longer works
+await say(E1, 'hello there'); // ordinary text while pending: still says "under review" and how to restart
+assert.ok(texts(E1).at(-1)!.includes('still under review') && texts(E1).at(-1)!.includes('"restart"'));
+const alertsBefore = wa.to(ADMIN).length;
+await say(E1, 'restart');
+assert.deepEqual([status(E1), field(E1).name, field(E1).vehicle_no, field(E1).seats, field(E1).photo_media_id, field(E1).rc_media_id], ['draft', null, null, null, null, null]);
+assert.equal(stateOf(E1), 'drv_details');
+assert.ok((last(E1) as any).body.includes('ONE message'), 'the form starts again');
+await pick(ADMIN, `adm:ok:${E1}`);
+assert.equal(status(E1), 'draft', 'the old Approve button does not approve a driver who is re-registering');
+assert.ok(texts(ADMIN).at(-1)!.includes('registering again'), 'and the admin is told why');
+await say(E1, 'Ramesh Kumar, UP85 AB 1234, 4'); await img(E1, 'e1-photo2'); await img(E1, 'e1-rc2');
+assert.equal(status(E1), 'pending');
+assert.ok(wa.to(ADMIN).length > alertsBefore && bodies(ADMIN).at(-1)!.includes('UP85 AB 1234'), 'the admin gets a new request with the corrected details');
+await pick(ADMIN, `adm:ok:${E1}`);
+assert.equal(status(E1), 'approved');
+
+// "driver" also starts over for a driver who is waiting or was rejected; the rejection says how
+const E2 = '919400000002';
+await say(E2, 'driver'); await pick(E2, 'lang:en'); await say(E2, 'Wrong Name, UP85 EF 1111, 4'); await img(E2, 'e2-photo'); await img(E2, 'e2-rc');
+await say(E2, 'driver');
+assert.equal(status(E2), 'draft', '"driver" restarts a pending registration');
+await say(E2, 'Right Name, UP85 EF 1111, 4'); await img(E2, 'e2-photo'); await img(E2, 'e2-rc');
+await engine.rejectDriver(E2);
+assert.ok(texts(E2).at(-1)!.includes('"restart"'), 'the rejection message says how to register again');
+await say(E2, 'driver');
+assert.deepEqual([status(E2), stateOf(E2), field(E2).name], ['draft', 'drv_details', null], '"driver" restarts a rejected registration');
+// mid sign-up (a draft) too
+await say(E2, 'Third Try, UP85 EF 2222, 5');
+assert.equal(stateOf(E2), 'drv_photo');
+await say(E2, 'restart');
+assert.deepEqual([status(E2), stateOf(E2), field(E2).name, field(E2).vehicle_no], ['draft', 'drv_details', null, null], 'restart works part-way through sign-up');
+
+// an approved driver is asked first; "driver" alone just shows their menu
+db.prepare('UPDATE drivers SET on_duty=1, rides_done=3, rating_sum=12, rating_count=3 WHERE phone=?').run(E1);
+await say(E1, 'driver');
+assert.equal(status(E1), 'approved', '"driver" does not restart an approved driver');
+await say(E1, 'restart');
+assert.deepEqual((last(E1) as any).buttons.map((b: { id: string }) => b.id), ['restart:yes', 'restart:no'], 'an approved driver must confirm');
+assert.equal(status(E1), 'approved');
+await pick(E1, 'restart:no');
+assert.equal(status(E1), 'approved');
+assert.ok(texts(E1).at(-1)!.includes('nothing changed'));
+db.prepare("INSERT INTO rides(rider_phone, driver_phone, status, group_size, t_requested) VALUES ('919400009999', ?, 'matched', 2, 1)").run(E1);
+await say(E1, 'restart');
+assert.ok(texts(E1).at(-1)!.includes('ride in progress'), 'no restart while a ride is under way');
+await pick(E1, 'restart:yes'); // even from an old button
+assert.equal(status(E1), 'approved');
+db.prepare("DELETE FROM rides WHERE rider_phone='919400009999'").run();
+await say(E1, 'restart');
+await pick(E1, 'restart:yes');
+const e1 = field(E1);
+assert.deepEqual([status(E1), e1.on_duty, e1.name, e1.rides_done, e1.rating_count], ['draft', 0, null, 3, 3], 'restarted: off duty and needs approval again, but rides and ratings are kept');
+await pick(E1, 'restart:yes'); // a stale button is ignored
+assert.equal(stateOf(E1), 'drv_details');
+// someone who is not a driver typing "restart" does not become one
+await say('919400000003', 'restart');
+assert.equal(q<{ c: number }>("SELECT COUNT(*) c FROM drivers WHERE phone='919400000003'").c, 0);
+step('wrong details: echoed back, corrected at the photo/RC step, "restart" (or "driver") starts over for waiting, rejected and in-progress drivers; approved drivers confirm first');
+
 // ---------------------------------------------------------------- B. quote ride, full lifecycle
 const ride1 = await riderRequest(R1, 'en', 'mathura', 3, 27.497, 77.461);
 assert.equal(q<{ kind: string }>('SELECT kind FROM rides WHERE id=?', ride1).kind, 'quote');
