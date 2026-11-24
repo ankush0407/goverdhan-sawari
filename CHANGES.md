@@ -12,7 +12,7 @@ function name given next to each range.
 
 ## 2026-11-24 — Driver registration in one message; no "Book a ride" button for drivers
 
-Commit `<HASH>` (on top of `adf46da`). Line numbers below are for that commit.
+Commit `e7749a8` (on top of `adf46da`). Line numbers below are for that commit.
 Tests: `npm run typecheck`, `npm run sim` (new one-message checks), `npm run sim:tg` and `npm run sim:admin` all pass. Two
 behaviours were also broken on purpose once to confirm the tests catch them (the ride button back on the driver welcome; a stray
 word overwriting the name), then restored. The flow was also tried in the dev simulator page: the welcome shows no buttons, and
