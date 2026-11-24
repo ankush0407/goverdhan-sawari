@@ -1,6 +1,7 @@
 // End-to-end simulation: no WhatsApp credentials needed. Run with `npm run sim`.
 import assert from 'node:assert/strict';
 import { openDb } from './db.js';
+import { parseDriverDetails } from './driverform.js';
 import { Engine, defaultConfig, normalizePlate } from './flow.js';
 import { MemorySender, type Incoming, type Out } from './whatsapp.js';
 
@@ -30,9 +31,8 @@ const step = (s: string) => console.log(`✓ ${s}`);
 async function onboardDriver(phone: string, name: string, plate: string, lat: number, lng: number) {
   await say(phone, 'driver');
   await pick(phone, 'lang:hi');
-  await say(phone, name);
-  await say(phone, plate);
-  await pick(phone, 'seats:4');
+  await say(phone, `${name}, ${plate}, 4`); // the whole form in one message
+  assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', phone).state, 'drv_photo', 'one message was enough for the details');
   await img(phone, `media-photo-${name.length}x`);
   await img(phone, `media-rc-${name.length}x`);
   assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', phone).status, 'pending');
@@ -69,17 +69,26 @@ const role = last(D3) as Extract<Out, { t: 'buttons' }>;
 assert.equal(role.t, 'buttons');
 assert.deepEqual(role.buttons.map((b) => b.id), ['role:rider', 'role:driver'], 'new user asked rider or driver');
 await pick(D3, 'role:driver');
-assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D3).state, 'drv_name');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D3).state, 'drv_details');
 assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', D3).status, 'draft');
+const welcome = last(D3) as Extract<Out, { t: 'text' }>;
+assert.equal(welcome.t, 'text', 'the driver welcome is plain text');
+assert.ok(welcome.body.includes('ONE message') && welcome.body.includes('Ramesh Kumar, UP85 AB 1234, 4'), 'asks for everything in one message, with an example');
+assert.ok(!JSON.stringify(welcome).includes('role:rider') && !JSON.stringify(welcome).includes('Book a ride'), 'no "Book a ride" button for a driver registering');
 step('driver who opens with "hi" picks "I am a driver" and lands in onboarding');
 
-await say(D3, 'Mohan Lal');
+await say(D3, 'Mohan Lal'); // only a name: ask for just the rest
+const ask1 = last(D3) as Extract<Out, { t: 'buttons' }>;
+assert.ok(ask1.body.includes('vehicle number') && ask1.body.includes('seats') && !ask1.body.includes('full name'), 'asks only for what is missing');
+assert.ok(ask1.buttons.some((b) => b.id === 'noplate'), 'offers "no number plate" while the plate is missing');
 await say(D3, 'nahi hai');
-assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D3).state, 'drv_vehicle', 'bad plate re-asked');
-assert.ok((last(D3) as any).buttons?.some((b: { id: string }) => b.id === 'noplate'), 'bad plate offers "no number plate"');
-await say(D3, 'up-85-ef 9012');
-assert.equal(q<{ vehicle_no: string }>('SELECT vehicle_no FROM drivers WHERE phone=?', D3).vehicle_no, 'UP85 EF 9012');
-await pick(D3, 'seats:5');
+assert.equal(q<{ name: string }>('SELECT name FROM drivers WHERE phone=?', D3).name, 'Mohan Lal', 'a stray word does not replace the name');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D3).state, 'drv_details', 'still waiting for the vehicle number and seats');
+await say(D3, 'up-85-ef 9012, 5'); // the two missing pieces, in one go
+const d3form = q<any>('SELECT name, vehicle_no, seats FROM drivers WHERE phone=?', D3);
+assert.deepEqual(d3form, { name: 'Mohan Lal', vehicle_no: 'UP85 EF 9012', seats: 5 });
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D3).state, 'drv_photo', 'details complete → photo');
+assert.ok(texts(D3).at(-1)!.includes('Got your details'));
 await img(D3, 'media-photo-mohan');
 await say(D3, "don't have");
 assert.ok((last(D3) as any).buttons?.some((b: { id: string }) => b.id === 'rclater'), 'typing instead of a photo re-offers the skip button');
@@ -127,12 +136,13 @@ step('"admin" gives the admin an Open-dashboard button (plain address on other c
 const D6 = '919101010101'; // opened the driver link but actually wants a ride
 await say(D6, 'DRIVER');
 await pick(D6, 'lang:hi');
-assert.ok((last(D6) as any).buttons?.some((b: { id: string }) => b.id === 'role:rider'), 'driver welcome offers "Book a ride"');
+assert.equal(last(D6).t, 'text', 'the driver welcome has no buttons at all');
 await say(D6, 'Hi');
 assert.equal(q<{ name: string | null }>('SELECT name FROM drivers WHERE phone=?', D6).name, null, '"Hi" not saved as a name');
 assert.deepEqual((last(D6) as any).buttons.map((b: { id: string }) => b.id), ['role:rider', 'role:driver'], 'asked: ride instead, or continue?');
 await pick(D6, 'role:driver');
-assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D6).state, 'drv_name', 'continue resumes the same step');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D6).state, 'drv_details', 'continue resumes the same step');
+assert.equal(last(D6).t, 'text', 'and shows the one-message instructions again');
 await say(D6, 'hello');
 await pick(D6, 'role:rider');
 assert.equal(q<{ c: number }>('SELECT COUNT(*) c FROM drivers WHERE phone=?', D6).c, 0, 'draft driver dropped');
@@ -159,9 +169,61 @@ await pick(D4, 'lang:hi');
 await say(D4, 'Shyam');
 await say(D4, 'number nahi hai');
 await pick(D4, 'noplate');
-assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D4).state, 'drv_seats');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D4).state, 'drv_details', 'seats are still missing');
 assert.equal(q<{ vehicle_no: string | null }>('SELECT vehicle_no FROM drivers WHERE phone=?', D4).vehicle_no, null);
-step('plate format checked and tidied; bad plate re-asked; "no number plate" lets sign-up continue');
+const seatsAsk = last(D4) as Extract<Out, { t: 'buttons' }>;
+assert.deepEqual(seatsAsk.buttons.map((b) => b.id), ['seats:4', 'seats:5', 'seats:6'], 'only seats missing → seat buttons');
+await pick(D4, 'seats:6');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D4).state, 'drv_photo', 'no plate is accepted, so on to the photo');
+step('plate format checked and tidied; "no number plate" lets sign-up continue; seats offered as buttons when only they are missing');
+
+// The form in one message, in any shape.
+const form = async (phone: string, text: string) => { await say(phone, 'driver'); await pick(phone, 'lang:en'); await say(phone, text); return q<any>('SELECT name, vehicle_no, seats FROM drivers WHERE phone=?', phone); };
+assert.deepEqual(await form('919301000001', 'Gopal Singh, RJ14 AB 9012, 6'), { name: 'Gopal Singh', vehicle_no: 'RJ14 AB 9012', seats: 6 });
+assert.deepEqual(await form('919301000002', 'Name: Ravi Kumar, Vehicle: up-85 cd 4321, Seats: 4'), { name: 'Ravi Kumar', vehicle_no: 'UP85 CD 4321', seats: 4 }, 'labels are understood');
+assert.deepEqual(await form('919301000003', '5 UP85EF1234 Mahesh Yadav'), { name: 'Mahesh Yadav', vehicle_no: 'UP85 EF 1234', seats: 5 }, 'any order, no commas');
+assert.deepEqual(await form('919301000004', 'रमेश कुमार, UP85 AB 1234, 4'), { name: 'रमेश कुमार', vehicle_no: 'UP85 AB 1234', seats: 4 }, 'Hindi names');
+for (const ph of ['919301000001', '919301000002', '919301000003', '919301000004']) assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', ph).state, 'drv_photo');
+// A vehicle number that is not valid is asked for again, not stored.
+assert.equal((await form('919301000005', 'Anil Kumar, UP85 AB 12345, 4')).vehicle_no, null, 'five digits is not a plate');
+assert.ok((last('919301000005') as any).body.includes('vehicle number'), 'and the bot asks for it again');
+// Only seats missing, then a re-sent full message corrects the name.
+await form('919301000006', 'Tara Chand, UP85 IJ 3333');
+assert.deepEqual((last('919301000006') as any).buttons.map((b: { id: string }) => b.id), ['seats:4', 'seats:5', 'seats:6']);
+await say('919301000006', 'Tara Chand Sharma, UP85 IJ 3333, 5');
+assert.equal(q<{ name: string }>('SELECT name FROM drivers WHERE phone=?', '919301000006').name, 'Tara Chand Sharma', 'a full re-send corrects the name');
+// The photo with the details as its caption is the whole form in one message; the RC is then the only thing left.
+const D8 = '919301000008';
+await say(D8, 'driver'); await pick(D8, 'lang:en');
+await go(D8, { kind: 'image', mediaId: 'media-photo-shyam', text: 'Shyam Lal, UP85 CD 4321, 4' });
+const d8 = q<any>('SELECT name, vehicle_no, seats, photo_media_id FROM drivers WHERE phone=?', D8);
+assert.deepEqual(d8, { name: 'Shyam Lal', vehicle_no: 'UP85 CD 4321', seats: 4, photo_media_id: 'media-photo-shyam' });
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D8).state, 'drv_rc', 'photo + caption skips straight to the RC');
+await pick(D8, 'rclater');
+assert.equal(q<{ status: string }>('SELECT status FROM drivers WHERE phone=?', D8).status, 'pending');
+// A photo without a caption is kept; the details sent afterwards then skip the photo step.
+const D9 = '919301000009';
+await say(D9, 'driver'); await pick(D9, 'lang:en');
+await go(D9, { kind: 'image', mediaId: 'media-photo-ravi' });
+assert.ok((last(D9) as any).body.includes('full name') && (last(D9) as any).body.includes('seats'), 'asks for the details');
+await say(D9, 'Ravi Kumar, UP85 EF 1111, 4');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D9).state, 'drv_rc', 'the photo was kept, so the RC is next');
+// Drivers caught part-way through the old step-by-step questions carry on in the new step.
+const D10 = '919301000010';
+await say(D10, 'driver'); await pick(D10, 'lang:en'); await say(D10, 'Old Timer');
+db.prepare("UPDATE users SET state='drv_vehicle' WHERE phone=?").run(D10);
+await say(D10, 'UP85 GH 2222, 5');
+assert.equal(q<{ state: string }>('SELECT state FROM users WHERE phone=?', D10).state, 'drv_photo');
+// Parsing, directly.
+for (const [text, want] of [
+  ['Ramesh Kumar, UP85 AB 1234, 4', { name: 'Ramesh Kumar', plate: 'UP85 AB 1234', seats: 4 }],
+  ['I am Mohan Lal, my vehicle is RJ14 AB 9012 and seats 6', { name: 'Mohan Lal', plate: 'RJ14 AB 9012', seats: 6 }],
+  ['4', { seats: 4 }], ['UP85 AB 1234', { plate: 'UP85 AB 1234' }], ['Ramesh Kumar', { name: 'Ramesh Kumar' }],
+  ['5 seater', { seats: 5 }], ['Ramesh Kumar, 9876543210, 4', { name: 'Ramesh Kumar', seats: 4 }],
+  ['Ramesh, UP85 AB 12345, 4', { name: 'Ramesh', seats: 4 }], ['Ramesh, ZZ85 AB 1234, 4', { name: 'Ramesh', seats: 4 }], ['22 BH 1234 AA, Gopal, 6', { name: 'Gopal', plate: '22 BH 1234 AA', seats: 6 }],
+  ['9', {}], ['', {}],
+] as const) assert.deepEqual(parseDriverDetails(text), want, `parse "${text}"`);
+step('driver form in ONE message: any order, labels, Hindi, photo caption, only the missing parts re-asked, old mid-signup drivers carry on');
 
 // ---------------------------------------------------------------- B. quote ride, full lifecycle
 const ride1 = await riderRequest(R1, 'en', 'mathura', 3, 27.497, 77.461);

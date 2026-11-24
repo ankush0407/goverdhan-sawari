@@ -10,6 +10,94 @@ function name given next to each range.
 
 ---
 
+## 2026-11-24 — Driver registration in one message; no "Book a ride" button for drivers
+
+Commit `<HASH>` (on top of `adf46da`). Line numbers below are for that commit.
+Tests: `npm run typecheck`, `npm run sim` (new one-message checks), `npm run sim:tg` and `npm run sim:admin` all pass. Two
+behaviours were also broken on purpose once to confirm the tests catch them (the ride button back on the driver welcome; a stray
+word overwriting the name), then restored. The flow was also tried in the dev simulator page: the welcome shows no buttons, and
+one message produced "Got your details", then the photo request.
+
+### Why
+
+Sign-up asked name, then vehicle number, then seats, then photo, then RC: five round trips. And the welcome carried a
+"Book a ride" button, which a registering driver should not see.
+
+### What a driver experiences
+
+After choosing a language the bot says, in one text with no buttons: send **one message** with your name, vehicle number
+and seats, for example `Ramesh Kumar, UP85 AB 1234, 4`.
+- **Any order, any shape:** `4 up85ab1234 Ramesh Kumar`, `Name: Ramesh, Vehicle: UP85 AB 1234, Seats: 4`, Hindi names, and
+  filler such as "I am … my vehicle is … and seats 6" all work.
+- **Only the missing part is asked for.** A message with just a name gets "I still need: vehicle number, seats". If only seats
+  are missing the bot offers 4 / 5 / 6 buttons; while the vehicle number is missing it offers "No number plate".
+- **A vehicle number must be valid**: a real Indian state or territory code, the right digits, or Bharat series. `UP85 AB 12345`
+  is not stored; the bot asks again.
+- **The photo can carry the details**: a photo with the details as its caption is the whole form in one message, and the bot
+  then asks only for the RC.
+- A stray word such as "nahi hai" no longer replaces a name already given; a message with two or more fields counts as a
+  deliberate re-send and does.
+- **No "Book a ride" button for drivers.** Typing "hi" or "ride" mid-sign-up still offers "Book a ride / Continue as driver", and
+  "cancel" stops sign-up; both are answers to something the driver typed. The welcome mentions `cancel`.
+- Drivers caught part-way through the old step-by-step questions carry on in the new step with what they already gave.
+
+### `src/driverform.ts` (new, 49 lines)
+
+| Lines | What |
+|---|---|
+| 4 | `STATE_CODES`: Indian state and union-territory codes. |
+| 7–14 | `normalizePlate` moved here from `flow.ts` (still exported from `flow.ts`) and now requires a real state code. |
+| 16 | `DriverDetails` type. |
+| 19–21 | The pattern that finds a plate inside a longer message, and the words that only label a field or pad a sentence. |
+| 27–49 | `parseDriverDetails(text)`: the vehicle number (validated and tidied), the seat count (the last standalone number from 2 to 8), and the name (what is left); anything it cannot find is absent. |
+
+### `src/flow.ts` (now 893 lines)
+
+| Lines | Change |
+|---|---|
+| 3, 7 | Imports the parser; re-exports `normalizePlate`. |
+| 472–482 | `startDriver` goes straight to the new `drv_details` step with the plain-text welcome (before: the name question and a "Book a ride" button). |
+| 484–494 | `driverOnboarding`: details messages go to `takeDetails`; the one-field-at-a-time cases are gone. |
+| 497–502 | `inDetailsStep`: `drv_details`, plus the old `drv_name`, `drv_vehicle`, `drv_seats` so drivers part-way through carry on. |
+| 504–516 | `takeDetails`: saves what was found; a lone name does not replace an existing one; a valid plate clears "no plate". |
+| 518–534 | `nextDetailsStep`: asks for the photo (or the RC if the photo came with the details) when name, vehicle and seats are in, otherwise only the missing ones, with the right buttons. |
+| 544–554 | `resumeOnboarding` ("Continue as driver"): repeats the instructions, or only what is missing. |
+| 581–601 | `onImage` (581–586 is the new part): in the details step the photo is kept and its caption is read as the details. |
+| 712–730 | `seats:` (712) and `noplate` (724) buttons now work in the details step. |
+| 749–751 | In `onLang`, after the language is chosen, sign-up starts in `drv_details`. |
+
+The old `driverWelcome` (with the ride button) and `askSeats` are removed.
+
+### Other files
+
+| File and lines | Change |
+|---|---|
+| `src/messages.ts` 74–81, 85 (English), 223–230, 234 (Hindi) | New `drv_welcome`, `drv_missing`, `drv_need_name`, `drv_need_plate`, `drv_need_seats`; `drv_ask_photo` now confirms the details. Removed the unused `drv_ask_vehicle`, `drv_bad_vehicle`, `drv_ask_seats`. **The Hindi is machine-drafted: have a native speaker check it.** |
+| `src/telegram.ts` 175 | A photo's caption is passed to the flow as its text. |
+| `src/whatsapp.ts` 40 | Same for a WhatsApp image caption. |
+| `public/admin.html` 129 | The dashboard labels the new step ("sending their name, vehicle and seats"). |
+| `README.md` 9 | The driver flow description. |
+
+### Tests
+
+| File and lines | What |
+|---|---|
+| `src/sim.ts` 31–37 | The shared driver sign-up helper sends the whole form in one message. |
+| `src/sim.ts` 65–95 | The welcome is plain text with the example and no ride button; a name alone asks only for the rest; a stray word keeps the name; the two missing pieces in one message complete the form. |
+| `src/sim.ts` 139, 166–178 | The ride-instead path and the "no plate" path (seat buttons when only seats are missing) for the new flow. |
+| `src/sim.ts` 180–226 | One-message forms in several shapes (commas, labels, any order, Hindi); an invalid plate is asked for again; a full re-send corrects the name; photo with caption; photo without caption then details; a driver on the old step; direct tests of the parser. |
+| `src/telegram-sim.ts` 72–81 | One message in Telegram, no buttons on the welcome, and a photo caption reaches the flow as text. |
+| `src/admin-sim.ts` 149, 290 | The unfinished-sign-up step is now `drv_details`. |
+
+### Known gaps
+
+- The Hindi copy is machine-drafted and unreviewed.
+- A name is whatever is left after the plate and seats are removed; filler words are stripped, but an unusual sentence can leave
+  extra words in it. The admin sees the name before approving.
+- Photos sent before the details are all taken as the driver's own photo (the last one is kept); the RC is asked for afterwards. A Telegram album arrives as separate photos, so it behaves the same way.
+
+---
+
 ## 2026-11-24 — Erase test data from the dashboard (Settings → Reset test data)
 
 Commit `67c3f2d` (on top of `e5e09e4`). Line numbers below are for that commit.

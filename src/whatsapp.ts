@@ -37,7 +37,7 @@ export function parseWebhook(body: any): Incoming[] {
             out.push({ ...base, kind: 'location', lat: m.location?.latitude, lng: m.location?.longitude, text: m.location?.name });
             break;
           case 'image':
-            out.push({ ...base, kind: 'image', mediaId: m.image?.id });
+            out.push({ ...base, kind: 'image', mediaId: m.image?.id, text: m.image?.caption });
             break;
           case 'audio':
             out.push({ ...base, kind: 'audio', mediaId: m.audio?.id });

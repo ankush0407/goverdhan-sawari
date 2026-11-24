@@ -1,7 +1,10 @@
 import { randomInt } from 'node:crypto';
 import type { DB } from './db.js';
+import { normalizePlate, parseDriverDetails, type DriverDetails } from './driverform.js';
 import { t, type Lang, type Key } from './messages.js';
 import type { Sender, Incoming } from './whatsapp.js';
+
+export { normalizePlate };
 
 export type Config = {
   brand: string;
@@ -69,16 +72,6 @@ const median = (xs: number[]) => {
   return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
 };
 const plus = (p: string) => (p.startsWith('+') ? p : '+' + p);
-
-/** Indian registration plate → tidy form ("up-85-ab 1234" → "UP85 AB 1234"), or null if it doesn't look like one. */
-export function normalizePlate(raw: string): string | null {
-  const s = raw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  let m = s.match(/^([A-Z]{2})(\d{1,2})([A-Z]{0,3})(\d{4})$/); // UP85 AB 1234, UP85 1234
-  if (m) return [m[1] + m[2], m[3], m[4]].filter(Boolean).join(' ');
-  m = s.match(/^(\d{2})BH(\d{4})([A-Z]{1,2})$/); // Bharat series: 22 BH 1234 AA
-  if (m) return `${m[1]} BH ${m[2]} ${m[3]}`;
-  return null;
-}
 
 export class Engine {
   constructor(
@@ -481,8 +474,8 @@ export class Engine {
       this.db.prepare("INSERT INTO drivers(phone,status,created_at) VALUES (?, 'draft', ?)").run(u.phone, this.now());
     }
     if (langKnown) {
-      this.setState(u.phone, 'drv_name', {}, true);
-      return this.driverWelcome(u.phone);
+      this.setState(u.phone, 'drv_details', {}, true);
+      return this.say(u.phone, 'drv_welcome');
     }
     this.setState(u.phone, 'drv_lang', {}, true);
     await this.promptLang(u.phone);
@@ -492,30 +485,52 @@ export class Engine {
     const txt = (m.text ?? '').trim();
     // "hi" mid-signup usually means they came in via the driver link but want a ride: ask, don't save it as a name.
     if (u.state !== 'drv_lang' && (GREETING.test(txt) || WANTS_RIDE.test(txt))) return this.askSwitch(u.phone);
+    if (this.inDetailsStep(u.state)) return this.takeDetails(u, parseDriverDetails(txt));
     switch (u.state) {
       case 'drv_lang': return this.promptLang(u.phone);
-      case 'drv_name':
-        this.db.prepare('UPDATE drivers SET name=? WHERE phone=?').run(txt.slice(0, 60), u.phone);
-        this.setState(u.phone, 'drv_vehicle');
-        return this.say(u.phone, 'drv_ask_vehicle');
-      case 'drv_vehicle': {
-        const plate = normalizePlate(txt);
-        if (!plate) {
-          const l = this.lang(u.phone);
-          return this.send.buttons(u.phone, t(l, 'drv_bad_vehicle'), [{ id: 'noplate', title: t(l, 'btn_no_plate') }]);
-        }
-        this.db.prepare('UPDATE drivers SET vehicle_no=? WHERE phone=?').run(plate, u.phone);
-        return this.askSeats(u.phone);
-      }
-      case 'drv_seats': return this.askSeats(u.phone);
       case 'drv_photo': return this.say(u.phone, 'drv_need_photo');
       case 'drv_rc': return this.askRc(u.phone); // e.g. "nahi hai" — re-offer the skip button
     }
   }
 
-  private driverWelcome(phone: string) {
+  /**
+   * Sign-up used to ask name, vehicle number and seats one at a time (drv_name, drv_vehicle, drv_seats). They are now one
+   * message (drv_details); drivers caught part-way through the old steps simply carry on in it.
+   */
+  private inDetailsStep(state: string) {
+    return state === 'drv_details' || state === 'drv_name' || state === 'drv_vehicle' || state === 'drv_seats';
+  }
+
+  /** Save whatever the message gave us, then ask only for what is still missing. */
+  private async takeDetails(u: User, got: DriverDetails) {
+    const d = this.getDriver(u.phone)!;
+    const found = [got.name, got.plate, got.seats].filter((x) => x != null).length;
+    // A lone word like "nahi hai" must not replace a name we already have; a message with two or more fields is a deliberate re-send.
+    if (got.name && (!d.name || found >= 2)) this.db.prepare('UPDATE drivers SET name=? WHERE phone=?').run(got.name, u.phone);
+    if (got.plate) {
+      this.db.prepare('UPDATE drivers SET vehicle_no=? WHERE phone=?').run(got.plate, u.phone);
+      this.setState(u.phone, 'drv_details', { noPlate: false });
+    }
+    if (got.seats) this.db.prepare('UPDATE drivers SET seats=? WHERE phone=?').run(got.seats, u.phone);
+    return this.nextDetailsStep(u.phone);
+  }
+
+  /** The next question: the photo once name, vehicle and seats are in, otherwise just the missing ones. */
+  private async nextDetailsStep(phone: string) {
+    this.setState(phone, 'drv_details');
+    const d = this.getDriver(phone)!;
+    const needName = !d.name, needPlate = !d.vehicle_no && !this.ctx(this.getUser(phone)).noPlate, needSeats = !d.seats;
+    if (!needName && !needPlate && !needSeats) {
+      if (d.photo_media_id) { this.setState(phone, 'drv_rc'); return this.askRc(phone); } // the photo came with the details
+      this.setState(phone, 'drv_photo');
+      return this.say(phone, 'drv_ask_photo');
+    }
     const l = this.lang(phone);
-    return this.send.buttons(phone, t(l, 'drv_welcome'), [{ id: 'role:rider', title: t(l, 'role_rider') }]);
+    const items = [needName && t(l, 'drv_need_name'), needPlate && t(l, 'drv_need_plate'), needSeats && t(l, 'drv_need_seats')].filter(Boolean).join('\n');
+    const body = t(l, 'drv_missing', { items });
+    if (needPlate) return this.send.buttons(phone, body, [{ id: 'noplate', title: t(l, 'btn_no_plate') }]);
+    if (needSeats && !needName) return this.send.buttons(phone, body, [4, 5, 6].map((n) => ({ id: `seats:${n}`, title: String(n) })));
+    return this.send.text(phone, body);
   }
 
   private askSwitch(phone: string) {
@@ -527,10 +542,11 @@ export class Engine {
 
   /** Re-send the prompt for the signup step they are on. */
   private resumeOnboarding(phone: string, state: string) {
+    if (this.inDetailsStep(state)) {
+      const d = this.getDriver(phone);
+      return d?.name || d?.vehicle_no || d?.seats ? this.nextDetailsStep(phone) : this.say(phone, 'drv_welcome');
+    }
     switch (state) {
-      case 'drv_name': return this.driverWelcome(phone);
-      case 'drv_vehicle': return this.say(phone, 'drv_ask_vehicle');
-      case 'drv_seats': return this.askSeats(phone);
       case 'drv_photo': return this.say(phone, 'drv_ask_photo');
       case 'drv_rc': return this.askRc(phone);
       default: return this.promptLang(phone);
@@ -540,12 +556,6 @@ export class Engine {
   /** Abandon a half-finished driver signup; only a draft is removed, never a submitted or approved driver. */
   private dropDraftDriver(phone: string) {
     this.db.prepare("DELETE FROM drivers WHERE phone=? AND status='draft'").run(phone);
-  }
-
-  private askSeats(phone: string) {
-    this.setState(phone, 'drv_seats');
-    const l = this.lang(phone);
-    return this.send.buttons(phone, t(l, 'drv_ask_seats'), [4, 5, 6].map((n) => ({ id: `seats:${n}`, title: String(n) })));
   }
 
   private askRc(phone: string) {
@@ -569,6 +579,11 @@ export class Engine {
   }
 
   private async onImage(u: User, m: Incoming) {
+    if (this.inDetailsStep(u.state)) {
+      // A photo with name, vehicle number and seats as its caption is the whole form in one message.
+      this.db.prepare('UPDATE drivers SET photo_media_id=? WHERE phone=?').run(m.mediaId ?? null, u.phone);
+      return this.takeDetails(u, parseDriverDetails(m.text ?? ''));
+    }
     if (u.state === 'drv_photo') {
       this.db.prepare('UPDATE drivers SET photo_media_id=? WHERE phone=?').run(m.mediaId ?? null, u.phone);
       this.setState(u.phone, 'drv_rc');
@@ -695,10 +710,9 @@ export class Engine {
       case 'qp': case 'qo': case 'qs': case 'qe': return this.driverQuoteStep(u, k, a);
       case 'arr': case 'go': case 'dc': case 'ns': case 'done': case 'same': case 'diff': case 'pay': return this.tripStep(u, k, a);
       case 'seats': {
-        if (u.state !== 'drv_seats') return;
+        if (!this.inDetailsStep(u.state)) return;
         this.db.prepare('UPDATE drivers SET seats=? WHERE phone=?').run(Number(a[0]), u.phone);
-        this.setState(u.phone, 'drv_photo');
-        return this.say(u.phone, 'drv_ask_photo');
+        return this.nextDetailsStep(u.phone);
       }
       case 'adm': {
         // Only the configured admin may approve or reject, whatever the button says.
@@ -708,9 +722,10 @@ export class Engine {
         return this.send.text(u.phone, ok ? `${a[0] === 'ok' ? '✅ Approved' : '❌ Rejected'}: ${d?.name ?? plus(a[1])}` : `Nothing changed for ${plus(a[1])}.`);
       }
       case 'noplate': {
-        if (u.state !== 'drv_vehicle') return;
+        if (!this.inDetailsStep(u.state)) return;
         this.db.prepare('UPDATE drivers SET vehicle_no=NULL WHERE phone=?').run(u.phone);
-        return this.askSeats(u.phone);
+        this.setState(u.phone, 'drv_details', { noPlate: true });
+        return this.nextDetailsStep(u.phone);
       }
       case 'rclater': {
         if (u.state !== 'drv_rc') return;
@@ -731,8 +746,8 @@ export class Engine {
     this.db.prepare('UPDATE users SET lang=? WHERE phone=?').run(lang, u.phone);
     const drv = this.getDriver(u.phone);
     if (u.state === 'drv_lang') {
-      this.setState(u.phone, 'drv_name');
-      return this.driverWelcome(u.phone);
+      this.setState(u.phone, 'drv_details');
+      return this.say(u.phone, 'drv_welcome');
     }
     if (drv && drv.status === 'approved') return this.driverMenu(u.phone);
     // A driver who opens with "hi" instead of the DRIVER keyword must not be pushed into booking a ride.

@@ -42,9 +42,7 @@ const step = (s: string) => console.log(`✓ ${s}`);
 async function signUp(phone: string, name: string, plate: string, rcMediaId: string) {
   await say(phone, 'driver');
   await pick(phone, 'lang:hi');
-  await say(phone, name);
-  await say(phone, plate);
-  await pick(phone, 'seats:4');
+  await say(phone, `${name}, ${plate}, 4`); // the whole form in one message
   await img(phone, 'FILE-photo');
   await img(phone, rcMediaId);
 }
@@ -54,7 +52,7 @@ await signUp(D1, 'Ramesh Kumar', 'up85 ab 1234', 'FILE-rc'); // RC id the sender
 await signUp(D2, 'Suresh Yadav', 'up85 cd 5678', 'FILE-html'); // a "file" that is not an image
 await say(D3, 'driver');
 await pick(D3, 'lang:hi');
-await say(D3, 'Gopal');                                         // stops at the vehicle number
+await say(D3, 'Gopal');                                         // only a name: the vehicle number and seats are still missing
 
 // ---------- the HTTP side ----------
 const app = express();
@@ -148,7 +146,7 @@ assert.equal(all.length, 3);
 assert.deepEqual(all.map((d: any) => d.status).sort(), ['draft', 'pending', 'pending']);
 const draft = all.find((d: any) => d.phone === D3);
 assert.equal(draft.name, 'Gopal');
-assert.equal(draft.signup_step, 'drv_vehicle', 'unfinished sign-up shows which step they are on');
+assert.equal(draft.signup_step, 'drv_details', 'unfinished sign-up shows which step they are on');
 assert.equal((await json('/admin/drivers')).length, 2, 'default is still "pending" only');
 assert.equal((await json('/admin/drivers?status=draft')).length, 1);
 assert.equal((await (await post(`/admin/drivers/${D3}/approve`)).json() as any).ok, false, 'a draft cannot be approved');
@@ -289,7 +287,7 @@ assert.deepEqual(counts(), { ...seeded, rides: 0, quotes: 0, ratings: 0, events:
 const d1 = db.prepare('SELECT rides_done, rating_sum, rating_count FROM drivers WHERE phone=?').get(D1) as any;
 assert.deepEqual(d1, { rides_done: 0, rating_sum: 0, rating_count: 0 }, 'driver counters reset');
 assert.equal((db.prepare('SELECT state FROM users WHERE phone=?').get(R1) as any).state, 'idle', 'a rider mid-feedback goes back to idle');
-assert.equal((db.prepare('SELECT state FROM users WHERE phone=?').get(D3) as any).state, 'drv_vehicle', 'a sign-up in progress is kept');
+assert.equal((db.prepare('SELECT state FROM users WHERE phone=?').get(D3) as any).state, 'drv_details', 'a sign-up in progress is kept');
 assert.equal(db.prepare("SELECT seq FROM sqlite_sequence WHERE name='rides'").get(), undefined, 'ride numbers start at 1 again');
 const backups1 = readdirSync(backupDir);
 assert.equal(backups1.length, 1);

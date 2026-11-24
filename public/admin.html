@@ -126,7 +126,7 @@ const STUCK_MS = 2 * 3600 * 1000;           // a ride open this long is probably
 const OPEN_RIDE = ['quoting', 'choosing', 'matched', 'arrived', 'started'];
 const WHEN = { now: 'now', '1h': 'in 1 hour', tom: 'tomorrow' };
 const TAG = { polite: 'polite', ontime: 'on time', fair: 'fair price', overcharged: 'overcharged', unsafe: 'felt unsafe' };
-const STEP = { drv_lang: 'choosing language', drv_name: 'giving their name', drv_vehicle: 'entering vehicle number', drv_seats: 'choosing seats', drv_photo: 'sending own photo', drv_rc: 'sending RC photo' };
+const STEP = { drv_lang: 'choosing language', drv_details: 'sending their name, vehicle and seats', drv_name: 'giving their name', drv_vehicle: 'entering vehicle number', drv_seats: 'choosing seats', drv_photo: 'sending own photo', drv_rc: 'sending RC photo' };
 
 // ---------- helpers ----------
 const $ = (s, r = document) => r.querySelector(s);

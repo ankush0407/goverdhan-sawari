@@ -67,13 +67,18 @@ await tap(DRV, 'lang:en');
 assert.ok(calls.some((c) => c.method === 'answerCallbackQuery'), 'tap acknowledged');
 assert.ok(calls.some((c) => c.method === 'editMessageText' && c.body.text.includes('✅ <b>English</b>')), 'choice shown in chat, buttons retired');
 assert.match(lastTo(DRV).body.text, /Welcome, driver/);
-await text(DRV, 'Ramesh Kumar');
-await text(DRV, 'up85 ab 1234');
-await tap(DRV, 'seats:4');
+assert.match(lastTo(DRV).body.text, /ONE message/, 'asks for everything in one message');
+assert.ok(!lastTo(DRV).body.reply_markup, 'the driver welcome has no buttons (no "Book a ride")');
+await text(DRV, 'Ramesh Kumar, up85 ab 1234, 4'); // the whole form in one message
+assert.match(lastTo(DRV).body.text, /Got your details/, 'one message was enough; the photo is next');
 await photo(DRV, 'FILE-ramesh');
 await photo(DRV, 'FILE-rc');
 assert.equal(status('919111111111').status, 'pending');
-step('driver onboarding: buttons, typed text and photos all map onto the flow');
+// A photo's caption reaches the flow as text, so the details can travel with the photo.
+const withCaption = await bot.toIncoming({ update_id: ++updateId, message: { message_id: ++msgId, chat: chat(DRV), from: from(DRV), caption: 'Ramesh Kumar, UP85 AB 1234, 4', photo: [{ file_id: 'FILE-x-small' }, { file_id: 'FILE-x' }] } });
+assert.equal(withCaption?.kind, 'image');
+assert.equal(withCaption?.text, 'Ramesh Kumar, UP85 AB 1234, 4');
+step('driver onboarding: the whole form in one message, then photos; a photo caption carries its text');
 
 // ---------- admin approves from Telegram ----------
 assert.match(lastTo(ADM).body.text, /Driver pending approval: Ramesh Kumar · UP85 AB 1234 · 4 seats/);

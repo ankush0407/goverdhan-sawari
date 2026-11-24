@@ -172,7 +172,7 @@ export class TelegramBot implements Sender {
     const base = { id, name: msg.from?.first_name as string | undefined };
     let m: Pending;
     if (msg.location) m = { ...base, kind: 'location', lat: msg.location.latitude, lng: msg.location.longitude };
-    else if (msg.photo) m = { ...base, kind: 'image', mediaId: msg.photo[msg.photo.length - 1].file_id };
+    else if (msg.photo) m = { ...base, kind: 'image', mediaId: msg.photo[msg.photo.length - 1].file_id, text: msg.caption }; // the caption can carry the sign-up details
     else if (msg.voice || msg.audio) m = { ...base, kind: 'audio', mediaId: (msg.voice ?? msg.audio).file_id };
     else if (typeof msg.text === 'string') m = { ...base, kind: 'text', text: commandToText(msg.text.trim()) };
     else m = { ...base, kind: 'other' };

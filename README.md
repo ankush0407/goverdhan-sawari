@@ -6,7 +6,7 @@ Free matchmaking, no payments handled (cash/UPI between rider and driver, record
 
 ## Flow
 
-**Driver** — texts `DRIVER` → language → name → vehicle no. (Indian plate format checked, or "No number plate") → seats → photo → RC photo (or "Don't have it now", send later) → admin taps Approve → `duty` + location = on duty. Typing "hi"/"ride" mid-signup offers to switch to booking a ride; "cancel" stops signup.
+**Driver** — texts `DRIVER` → language → **one message** with name, vehicle number and seats, in any order (`Ramesh Kumar, UP85 AB 1234, 4`; or send the photo with these as its caption) → the bot asks only for whatever is still missing → photo (if not already sent) → RC photo (or "Don't have it now", send later) → admin taps Approve → `duty` + location = on duty. The vehicle number is checked against Indian plate formats (a real state code; or "No number plate"). The welcome has no "Book a ride" button: a driver who typed "hi"/"ride" mid-sign-up is asked whether to switch, and "cancel" stops sign-up.
 
 **Rider** — scans QR (opens chat, "hi") → language → *first contact only:* "Book a ride / I am a driver" → pickup pin (or typed place) → drop (list) → group size → when.
 
