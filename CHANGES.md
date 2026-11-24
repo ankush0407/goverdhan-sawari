@@ -12,7 +12,7 @@ function name given next to each range.
 
 ## 2026-11-24 — Drivers can fix wrong details and restart registration
 
-Commit `<HASH>` (on top of `9d14398`). Line numbers below are for that commit.
+Commit `5858c2e` (on top of `9d14398`). Line numbers below are for that commit.
 Tests: `npm run typecheck`, `npm run sim` (new "wrong details" checks), `npm run sim:tg` and `npm run sim:admin` all pass. Four
 behaviours were broken on purpose to confirm the tests catch them: an approved driver restarting without confirming,
 restarting during a ride, a restarted driver silently staying approvable, and a lone word counting as a correction. The last
