@@ -12,7 +12,7 @@ function name given next to each range.
 
 ## 2026-11-24 — Open the admin dashboard inside Telegram (`/admin` mini-app, signed-in automatically)
 
-Commit `<HASH>` (on top of `4a0adee`). Line numbers below are for that commit.
+Commit `81da975` (on top of `4a0adee`). Line numbers below are for that commit.
 Tests: `npm run typecheck`, `npm run sim` (new "admin" check), `npm run sim:tg` (new `/admin` check) and `npm run sim:admin`
 (new mini-app sign-in check) all pass. The signature check was also removed on purpose once to confirm the tests catch it
 (an account signed with another bot's key got in, and the test failed), then restored. The page was exercised in a browser
