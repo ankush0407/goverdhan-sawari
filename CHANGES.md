@@ -12,7 +12,7 @@ function name given next to each range.
 
 ## 2026-11-24 — Erase test data from the dashboard (Settings → Reset test data)
 
-Commit `<HASH>` (on top of `e5e09e4`). Line numbers below are for that commit.
+Commit `67c3f2d` (on top of `e5e09e4`). Line numbers below are for that commit.
 Tests: `npm run typecheck`, `npm run sim`, `npm run sim:tg` and `npm run sim:admin` (new reset checks) all pass. Each safety
 guard (the typed confirmation, "no backup, no deletion", and "off unless enabled") was removed on purpose once to confirm the
 tests fail without it, then restored. The Settings tab was also used in a browser against a throwaway copy of the data: both
